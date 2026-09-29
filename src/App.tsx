@@ -399,7 +399,7 @@ export default function App() {
 
     try {
       let arrayBuffer: ArrayBuffer;
-      const filename = activeSong.title || 'Mirelo Transcription';
+      const filename = activeSong.title || 'Transcription';
 
       if (url) {
         addDiagnosticLog('info', `[MIDI Pipeline] Downloading binary MIDI from URL: ${url}`);
@@ -441,9 +441,9 @@ export default function App() {
       const newSong: Song = {
         id: `mirelo-midi-${Date.now()}`,
         title: `Parsed MIDI — ${parsed.title}`,
-        composer: `Mirelo MIDI File (${parsed.numTracks} Tracks, ${parsed.ppq} PPQ)`,
+        composer: `${parsed.numTracks} ${parsed.numTracks === 1 ? 'Instrument' : 'Instruments'} · MIDI Score`,
         difficulty: parsed.notes.length > 200 ? 'Advanced' : 'Intermediate',
-        genre: 'Mirelo MIDI',
+        genre: 'Imported Score',
         durationMs: parsed.durationMs,
         notes: parsed.notes,
         bpm: parsed.bpm,
@@ -467,18 +467,18 @@ export default function App() {
       addDiagnosticLog('success', `[MIDI Pipeline] Loaded parsed .mid score into player! Built-in MIDI sounds ready.`);
     } catch (err: any) {
       addDiagnosticLog('error', `[MIDI Pipeline Error] ${err.message}`);
-      alert(`MIDI Parsing Error: ${err.message}`);
+      alert("Couldn't open your MIDI. Please try again.");
     }
   };
 
   const handleOpenMireloMidiInStudio = async (targetJobId?: string) => {
     const jobId = targetJobId || activeTranscription?.metadata?.jobId || activeJobId;
     if (!jobId) {
-      alert('No active Mirelo job ID found.');
+      alert("No active transcription found.");
       return;
     }
 
-    const title = activeTranscription?.title || 'Mirelo Transcription';
+    const title = activeTranscription?.title || 'Transcribed Audio';
     addDiagnosticLog('info', `[Mirelo MIDI Import] Downloading exact binary .mid file from /api/transcribe/midi-file/${jobId}...`);
 
     try {
@@ -509,7 +509,7 @@ export default function App() {
 
       const newSong: Song = {
         id: `transcribed-${jobId}-${Date.now()}`,
-        title: parsed.title && parsed.title !== 'transcription' ? parsed.title : (title !== 'Mirelo Transcription' ? title : 'Transcribed Audio'),
+        title: parsed.title && parsed.title !== 'transcription' ? parsed.title : (title !== 'Transcribed Audio' ? title : 'Transcribed Audio'),
         composer: `${parsed.numTracks || 1} ${parsed.numTracks === 1 ? 'Instrument' : 'Instruments'} · Audio to MIDI`,
         difficulty: parsed.notes.length > 200 ? 'Advanced' : 'Intermediate',
         genre: 'Transcribed Score',
@@ -537,7 +537,7 @@ export default function App() {
       addDiagnosticLog('success', `[Mirelo MIDI Import] Successfully loaded Mirelo .mid file into Falling-Note Player!`);
     } catch (err: any) {
       addDiagnosticLog('error', `[Mirelo MIDI Import Error] ${err.message}`);
-      alert(`Mirelo MIDI Import Error: ${err.message}`);
+      alert("Couldn't open your MIDI. Please try again.");
     }
   };
 
@@ -545,7 +545,7 @@ export default function App() {
     const rawId = targetJobId || activeTranscription?.metadata?.jobId || activeJobId;
     const jobId = cleanJobId(rawId);
     if (!jobId) {
-      alert('No active Mirelo job ID found.');
+      alert("No active transcription found.");
       return;
     }
 
@@ -579,16 +579,20 @@ export default function App() {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = 'mirelo-test.mid';
+      const cleanTitle = (activeTranscription?.title || activeSong?.title || '')
+        .replace(/[/\\:*?"<>|]/g, '')
+        .trim();
+      const downloadName = cleanTitle ? `${cleanTitle}.mid` : 'Transcription.mid';
+      link.download = downloadName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 
-      addDiagnosticLog('success', `[Mirelo MIDI Download] Validated binary MThd signature (${arrayBuffer.byteLength} bytes). Download started: mirelo-test.mid`);
+      addDiagnosticLog('success', `[Mirelo MIDI Download] Validated binary MThd signature (${arrayBuffer.byteLength} bytes). Download started: ${downloadName}`);
     } catch (err: any) {
       addDiagnosticLog('error', `[Mirelo MIDI Download Error] ${err.message}`);
-      alert(`Download Error: ${err.message}`);
+      alert("Couldn't download your MIDI. Please try again.");
     }
   };
 
@@ -1834,7 +1838,7 @@ export default function App() {
 
     if (!jobId) {
       console.error('[Mirelo Direct] No valid Mirelo Job ID provided to applyCompletedTranscription');
-      setTranscribeError('Missing valid Mirelo Job ID for binary MIDI retrieval');
+      setTranscribeError("Couldn't retrieve the MIDI file for this transcription. Please try again.");
       addDiagnosticLog('error', 'Studio transition aborted: Missing valid Mirelo Job ID');
       return;
     }
@@ -3192,7 +3196,7 @@ export default function App() {
                       className="flex items-center justify-center gap-1.5 py-2 px-2 bg-[#1b1b22] hover:bg-[#25252e] border border-white/[0.1] text-[#ede8df] font-sans font-medium rounded text-xs transition-colors cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5 text-[#c5a059] rotate-180" />
-                      <span>Download Mirelo .mid</span>
+                      <span>Download MIDI</span>
                     </button>
                   </div>
 
@@ -3625,15 +3629,17 @@ export default function App() {
                         <span>Select Audio File</span>
                       </button>
 
-                      <button
-                        onClick={handleTestWithSampleAudio}
-                        disabled={isTranscribing}
-                        className="w-full sm:w-auto px-4 py-2.5 text-xs font-sans rounded-md border border-[#c5a059]/30 bg-[#c5a059]/10 text-[#d8ba7f] hover:bg-[#c5a059]/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 min-h-[44px]"
-                        title="Run an end-to-end multi-track test with acoustic piano, acoustic bass, and detected chords"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-[#c5a059]" />
-                        <span>Try Sample Recording</span>
-                      </button>
+                      {isDebugMode && (
+                        <button
+                          onClick={handleTestWithSampleAudio}
+                          disabled={isTranscribing}
+                          className="w-full sm:w-auto px-4 py-2.5 text-xs font-sans rounded-md border border-[#c5a059]/30 bg-[#c5a059]/10 text-[#d8ba7f] hover:bg-[#c5a059]/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 min-h-[44px]"
+                          title="Run an end-to-end multi-track test with acoustic piano, acoustic bass, and detected chords"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-[#c5a059]" />
+                          <span>Try Sample Recording</span>
+                        </button>
+                      )}
 
                       {isDebugMode && (
                         <button
@@ -3658,15 +3664,15 @@ export default function App() {
                   <div className="flex-1 flex flex-col gap-1.5 min-w-0">
                     <span className="font-medium text-[#f5d6d8]">
                       {transcribeError.includes('Credit Limit') || transcribeError.includes('402') 
-                        ? 'Transcription Credit Limit Reached' 
+                        ? 'Transcription is temporarily unavailable' 
                         : 'Something went wrong'}
                     </span>
                     <p className="text-[#d8a8ad] leading-relaxed">
                       {transcribeError.includes('Credit Limit') || transcribeError.includes('402')
-                        ? 'Your transcription credit limit has been reached. Please upgrade your plan or test with our sample audio recording.'
-                        : 'We couldn’t finish preparing your MIDI. Please try again or test with a sample file.'}
+                        ? 'Transcription is temporarily unavailable. Please try again later.'
+                        : 'We couldn’t finish preparing your MIDI. Please try again.'}
                     </p>
-                    {(transcribeError.includes('Credit Limit') || transcribeError.includes('402')) && (
+                    {isDebugMode && (transcribeError.includes('Credit Limit') || transcribeError.includes('402')) && (
                       <div className="flex flex-wrap items-center gap-2 mt-1">
                         <button
                           onClick={handleTestWithSampleAudio}

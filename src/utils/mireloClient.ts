@@ -367,8 +367,8 @@ export function convertTranscriptionToSong(
 
   return {
     id: transcription.id,
-    title: `Mirelo — ${transcription.title}`,
-    composer: `Mirelo Audio-to-MIDI Pro (${instrumentSummary})`,
+    title: transcription.title,
+    composer: `${transcription.tracks?.length || 1} ${transcription.tracks?.length === 1 ? 'Instrument' : 'Instruments'} · MIDI Score`,
     difficulty: midiNotes.length > 250 ? 'Advanced' : midiNotes.length > 100 ? 'Intermediate' : 'Beginner',
     genre: 'AI Transcription',
     durationMs: transcription.durationMs,
