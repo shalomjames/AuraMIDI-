@@ -16,6 +16,7 @@ import {
 } from './server/mireloService.js';
 import { NormalizedTranscription } from './src/types/transcription.js';
 import { createMIDIFileBuffer } from './src/utils/midiEncoder.js';
+import { requireUser } from './server/auth.js';
 
 dotenv.config();
 
@@ -47,7 +48,7 @@ app.get('/api/transcribe/config', (_req: Request, res: Response) => {
 });
 
 // 2. Asynchronous Job Submission Endpoint: Uploads audio & creates Mirelo job, immediately returning jobId
-app.post('/api/transcribe/submit', upload.single('audio'), async (req: Request, res: Response) => {
+app.post('/api/transcribe/submit', requireUser, upload.single('audio'), async (req: Request, res: Response) => {
   const file = req.file;
 
   if (!file) {
@@ -85,7 +86,7 @@ app.post('/api/transcribe/submit', upload.single('audio'), async (req: Request, 
 });
 
 // 3. Asynchronous Job Status Endpoint: Queries existing job, returns progress/status & cached completed result
-app.get('/api/transcribe/status/:jobId', async (req: Request, res: Response) => {
+app.get('/api/transcribe/status/:jobId', requireUser, async (req: Request, res: Response) => {
   const jobId = cleanJobId(req.params.jobId);
   const fileNameFallback = req.query.fileName as string | undefined;
 
@@ -118,7 +119,7 @@ app.get('/api/transcribe/status/:jobId', async (req: Request, res: Response) => 
 });
 
 // 3b. Serve Raw Binary .MID File Endpoint for exact MIDI player feeding & direct downloading
-app.get('/api/transcribe/midi-file/:jobId', async (req: Request, res: Response) => {
+app.get('/api/transcribe/midi-file/:jobId', requireUser, async (req: Request, res: Response) => {
   const jobId = cleanJobId(req.params.jobId);
   let buffer = getMireloMidiBuffer(jobId);
 
@@ -158,7 +159,7 @@ app.get('/api/transcribe/midi-file/:jobId', async (req: Request, res: Response) 
 });
 
 // 3b2. Dedicated Binary MIDI Download Endpoint
-app.get('/api/transcribe/download-midi', async (req: Request, res: Response) => {
+app.get('/api/transcribe/download-midi', requireUser, async (req: Request, res: Response) => {
   const jobId = cleanJobId(req.query.jobId as string);
 
   if (!jobId) {
@@ -205,6 +206,10 @@ app.get('/api/transcribe/download-midi', async (req: Request, res: Response) => 
 
 // 3c. Raw Mirelo Response Inspection Endpoint
 app.get('/api/transcribe/raw-response/:jobId', (req: Request, res: Response) => {
+  if (process.env.ENABLE_DEBUG_ROUTES !== 'true') {
+    res.status(404).json({ success: false, error: 'Not found' });
+    return;
+  }
   const jobId = cleanJobId(req.params.jobId);
   const rawData = getMireloRawResponse(jobId);
 
@@ -218,6 +223,10 @@ app.get('/api/transcribe/raw-response/:jobId', (req: Request, res: Response) => 
 
 // 3d. Mirelo MIDI Debug Diagnostics Endpoint
 app.get('/api/transcribe/debug/:jobId', (req: Request, res: Response) => {
+  if (process.env.ENABLE_DEBUG_ROUTES !== 'true') {
+    res.status(404).json({ success: false, error: 'Not found' });
+    return;
+  }
   const { jobId } = req.params;
   const debug = getMireloMidiDebug(jobId);
 
@@ -230,7 +239,7 @@ app.get('/api/transcribe/debug/:jobId', (req: Request, res: Response) => {
 });
 
 // 4. Backward-compatible /api/transcribe endpoint
-app.post('/api/transcribe', upload.single('audio'), async (req: Request, res: Response) => {
+app.post('/api/transcribe', requireUser, upload.single('audio'), async (req: Request, res: Response) => {
   const file = req.file;
 
   if (!file) {
@@ -269,7 +278,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req: Request, res: Re
 
 // 3. Development / Testing Sample Endpoint
 // Allows instant end-to-end testing of falling notes, chord display, and track selector
-app.post('/api/transcribe/sample', (_req: Request, res: Response) => {
+app.post('/api/transcribe/sample', requireUser, (_req: Request, res: Response) => {
   console.log('[Server] Generating sample multi-track piano arpeggio with chords...');
 
   const sampleNotes = [

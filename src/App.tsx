@@ -67,6 +67,7 @@ import { createMIDIFileBuffer } from './utils/midiEncoder';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { AuthScreen } from './components/AuthScreen';
+import { authFetch } from './lib/authFetch';
 
 // Visual themes refined for quiet, sophisticated piano studio aesthetics
 interface Theme {
@@ -563,7 +564,7 @@ export default function App() {
     addDiagnosticLog('info', `[Mirelo MIDI Import] Downloading exact binary .mid file from /api/transcribe/midi-file/${jobId}...`);
 
     try {
-      const res = await fetch(`/api/transcribe/midi-file/${encodeURIComponent(jobId)}`);
+      const res = await authFetch(`/api/transcribe/midi-file/${encodeURIComponent(jobId)}`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: Failed to retrieve binary .mid file from server`);
       }
@@ -637,7 +638,7 @@ export default function App() {
     try {
       addDiagnosticLog('info', `[Mirelo MIDI Download] Fetching binary MIDI stream from /api/transcribe/download-midi?jobId=${jobId}...`);
       const url = `/api/transcribe/download-midi?jobId=${encodeURIComponent(jobId)}`;
-      const res = await fetch(url);
+      const res = await authFetch(url);
       
       if (!res.ok) {
         let errText = '';
@@ -1942,7 +1943,7 @@ export default function App() {
 
     try {
       console.log(`[Mirelo Direct] Requesting binary .mid artifact for real Mirelo job ID: "${jobId}"...`);
-      const midRes = await fetch(`/api/transcribe/midi-file/${encodeURIComponent(jobId)}`);
+      const midRes = await authFetch(`/api/transcribe/midi-file/${encodeURIComponent(jobId)}`);
       if (!midRes.ok) throw new Error(`HTTP ${midRes.status} fetching binary .mid file for job ${jobId}`);
       const arrayBuffer = await midRes.arrayBuffer();
 
@@ -2388,7 +2389,12 @@ export default function App() {
         {/* Right side actions & Menu */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => supabase.auth.signOut()}
+            onClick={async () => {
+              await supabase.auth.signOut();
+              localStorage.removeItem('mirelo_active_job_id');
+              localStorage.removeItem('mirelo_active_job_name');
+              window.location.reload();
+            }}
             className="px-2.5 py-1 text-xs font-sans text-[#8f8a80] hover:text-[#ede8df] hover:bg-white/[0.04] rounded-md transition-colors cursor-pointer border border-white/[0.06]"
             title="Sign out"
           >

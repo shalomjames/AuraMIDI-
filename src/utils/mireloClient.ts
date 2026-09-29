@@ -5,6 +5,7 @@ import {
   normalizedNotesToMIDINotes
 } from '../types/transcription';
 import { MIDINote, Song } from '../data/sampleSongs';
+import { authFetch } from '../lib/authFetch';
 
 /**
  * Checks server configuration and whether MIRELO_API_KEY is configured.
@@ -50,7 +51,7 @@ export async function submitAudioToMirelo(file: File): Promise<{
 
   for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
     try {
-      const res = await fetch('/api/transcribe/submit', {
+      const res = await authFetch('/api/transcribe/submit', {
         method: 'POST',
         body: formData,
       });
@@ -123,7 +124,7 @@ export async function pollMireloJobStatus(
     const elapsedSec = Math.round((Date.now() - startTimeMs) / 1000);
 
     try {
-      const res = await fetch(`/api/transcribe/status/${encodeURIComponent(jobId)}?fileName=${encodeURIComponent(fileName)}`);
+      const res = await authFetch(`/api/transcribe/status/${encodeURIComponent(jobId)}?fileName=${encodeURIComponent(fileName)}`);
       
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -290,7 +291,7 @@ export async function resumeMireloJob(
  * Development test transcription that runs an end-to-end sample audio with multi-track and chords.
  */
 export async function transcribeSampleAudio(): Promise<NormalizedTranscription> {
-  const res = await fetch('/api/transcribe/sample', { method: 'POST' });
+  const res = await authFetch('/api/transcribe/sample', { method: 'POST' });
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to generate sample transcription');
