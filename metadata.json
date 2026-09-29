@@ -1,0 +1,8 @@
+{
+  "name": "Remix AuraMIDI - Interactive Falling Notes Studio",
+  "description": "A high-fidelity interactive MIDI player and falling notes learning canvas, featuring virtual synthesizer, transpose, speed controls, precision A/B loops, and an audio-to-MIDI transcription preview.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
