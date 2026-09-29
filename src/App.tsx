@@ -220,7 +220,7 @@ const PianoKeyboard = React.memo(function PianoKeyboard({
   );
 });
 
-export const isRhythmTrack = (track: { name?: string; notes?: { channel?: number }[] }): boolean => {
+const isRhythmTrack = (track: { name?: string; notes?: any[] }): boolean => {
   if (!track) return false;
   const name = (track.name || '').toLowerCase();
   if (name.includes('drum') || name.includes('percussion')) {
@@ -236,7 +236,7 @@ export const isRhythmTrack = (track: { name?: string; notes?: { channel?: number
   return false;
 };
 
-export const getDefaultTrackIds = (tracks?: { id: string; name?: string; notes?: { channel?: number }[] }[]): string[] => {
+const getDefaultTrackIds = (tracks?: { id: string; name?: string; notes?: { channel?: number }[] }[]): string[] => {
   if (!tracks || tracks.length === 0) return [];
   const nonRhythmic = tracks.filter(t => !isRhythmTrack(t)).map(t => t.id);
   if (nonRhythmic.length === 0) {
@@ -380,7 +380,21 @@ export default function App() {
 
   // Derive transposed MIDI note events sorted chronologically for high-performance binary search
   const activeNotes = useMemo<MIDINote[]>(() => {
-    const raw = activeSong.notes || [];
+    let raw: MIDINote[] = [];
+    if (activeSong.tracks && activeSong.tracks.length > 0 && selectedTrackIds.length > 0) {
+      const hasMatchingTrack = activeSong.tracks.some(t => selectedTrackIds.includes(t.id));
+      if (hasMatchingTrack) {
+        raw = activeSong.tracks
+          .filter(t => selectedTrackIds.includes(t.id))
+          .flatMap(t => t.notes || [])
+          .filter(n => n.note >= 0 && n.note <= 127 && n.duration > 0);
+      }
+    }
+
+    if (raw.length === 0) {
+      raw = activeSong.notes || [];
+    }
+
     const mapped = transpose === 0 
       ? [...raw] 
       : raw.map(note => ({
@@ -388,7 +402,7 @@ export default function App() {
           note: Math.max(21, Math.min(108, note.note + transpose))
         }));
     return mapped.sort((a, b) => a.time - b.time);
-  }, [activeSong.notes, transpose]);
+  }, [activeSong.notes, activeSong.tracks, selectedTrackIds, transpose]);
 
   // Precalculate max note duration for bounded visible search window
   const maxNoteDuration = useMemo(() => {
@@ -2268,6 +2282,8 @@ export default function App() {
         return [...prev, trackId];
       }
     });
+    notesScheduledTracker.current.clear();
+    synthInstance.silenceAll();
   };
 
   return (
@@ -4087,6 +4103,7 @@ export default function App() {
                           <div className="flex flex-col divide-y divide-white/[0.04] bg-[#0c0c0f] border border-white/[0.05] rounded-lg overflow-hidden">
                             {displayTracks.map((trk) => {
                               const isSelected = selectedTrackIds.includes(trk.id);
+                              const isRhythm = isRhythmTrack(trk);
                               return (
                                 <button
                                   key={trk.id}
@@ -4098,11 +4115,18 @@ export default function App() {
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                     <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-[#c5a059]' : 'bg-[#3b3832]'}`} />
-                                    <span className={`text-xs sm:text-sm font-sans font-medium truncate ${
-                                      isSelected ? 'text-[#ede8df]' : 'text-[#787369]'
-                                    }`}>
-                                      {formatTrackName(trk.name)}
-                                    </span>
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <span className={`text-xs sm:text-sm font-sans font-medium truncate ${
+                                        isSelected ? 'text-[#ede8df]' : 'text-[#787369]'
+                                      }`}>
+                                        {isRhythm ? 'Drums / Percussion' : formatTrackName(trk.name)}
+                                      </span>
+                                      {isRhythm && (
+                                        <span className="text-[11px] text-[#787369] font-sans">
+                                          {isSelected ? 'Shown on the keyboard' : 'Not shown on the keyboard'}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-3 shrink-0">
                                     <span className="text-xs text-[#787369] font-sans font-tabular">
