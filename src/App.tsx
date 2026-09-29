@@ -4026,21 +4026,58 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-col divide-y divide-white/[0.04] bg-[#0c0c0f] border border-white/[0.05] rounded-lg overflow-hidden">
-                        {activeTranscription.tracks.map((trk) => (
-                          <div
-                            key={trk.id}
-                            className="flex items-center justify-between gap-3 px-4 py-3 min-h-[44px]"
-                          >
-                            <span className="text-xs sm:text-sm font-sans font-medium text-[#ede8df] truncate min-w-0 flex-1">
-                              {formatTrackName(trk.name)}
-                            </span>
-                            <span className="text-xs text-[#787369] font-sans font-tabular shrink-0">
-                              {trk.notes.length} notes
-                            </span>
-                          </div>
-                        ))}
+                        {activeTranscription.tracks.map((trk) => {
+                          const isSelected = selectedTrackIds.includes(trk.id);
+                          return (
+                            <button
+                              key={trk.id}
+                              type="button"
+                              onClick={() => handleToggleTrack(trk.id)}
+                              className={`w-full flex items-center justify-between gap-3 px-4 py-3 min-h-[44px] text-left cursor-pointer transition-colors ${
+                                isSelected ? 'bg-[#14141a]/60 hover:bg-[#181822]' : 'bg-transparent hover:bg-white/[0.02]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-[#c5a059]' : 'bg-[#3b3832]'}`} />
+                                <span className={`text-xs sm:text-sm font-sans font-medium truncate ${
+                                  isSelected ? 'text-[#ede8df]' : 'text-[#787369]'
+                                }`}>
+                                  {formatTrackName(trk.name)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <span className="text-xs text-[#787369] font-sans font-tabular">
+                                  {trk.notes.length} notes
+                                </span>
+                                <span className={`text-[11px] font-sans font-medium px-2 py-0.5 rounded border ${
+                                  isSelected 
+                                    ? 'bg-[#c5a059]/15 text-[#d8ba7f] border-[#c5a059]/30' 
+                                    : 'bg-white/[0.02] text-[#6d6860] border-white/[0.05]'
+                                }`}>
+                                  {isSelected ? 'On' : 'Off'}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
+
+                    {/* Original audio player */}
+                    {(activeTranscription.audioUrl || transcribeFile?.audioUrl) && (
+                      <div className="flex flex-col gap-2 p-3.5 bg-[#0e0e11] border border-white/[0.06] rounded-md">
+                        <div className="flex items-center gap-2 text-xs font-sans font-medium text-[#c9c4b9]">
+                          <Volume2 className="w-3.5 h-3.5 text-[#c5a059]" />
+                          <span>Compare with original</span>
+                        </div>
+                        <audio
+                          controls
+                          src={activeTranscription.audioUrl || transcribeFile?.audioUrl}
+                          className="w-full h-8 outline-none"
+                          preload="metadata"
+                        />
+                      </div>
+                    )}
 
                   </div>
               </div>
