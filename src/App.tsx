@@ -1826,6 +1826,16 @@ export default function App() {
       .replace(/GPU cluster/gi, 'audio engine');
   };
 
+  const formatTrackName = (name: string): string => {
+    if (!name) return 'Instrument';
+    return name
+      .replace(/[_-]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  };
+
   // Helper to cleanly activate a completed transcription in Studio using direct parseMIDIFile on binary .mid artifact
   const applyCompletedTranscription = useCallback(async (result: NormalizedTranscription, switchTab: boolean = true, explicitJobId?: string) => {
     setActiveTranscription(result);
@@ -3958,158 +3968,81 @@ export default function App() {
                   )}
 
                   {/* Summary Result Card */}
-                  <div className="bg-[#111114] border border-white/[0.08] p-6 rounded-lg flex flex-col gap-6 shadow-xl">
+                  <div className="bg-[#111114] border border-white/[0.08] p-5 sm:p-6 rounded-lg flex flex-col gap-6 shadow-xl w-full">
                     
-                    {/* Result Header */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/[0.06] pb-4">
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2 text-xs text-[#787369] font-sans">
-                          <span className="flex items-center gap-1.5 text-[#a3d99b] font-medium">
-                            <CheckCircle className="w-3.5 h-3.5 text-[#a3d99b]" />
-                            <span>Your MIDI is ready</span>
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-tabular">
-                            {(activeTranscription.durationMs / 1000).toFixed(1)}s
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-tabular">
-                            {activeTranscription.notes.length} notes
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span>
-                            {activeTranscription.tracks.length || activeTranscription.instruments.length || 1} {activeTranscription.tracks.length === 1 ? 'instrument' : 'instruments'}
-                          </span>
-                        </div>
-                        <h3 className="font-editorial text-2xl text-[#f5f2ec] font-normal tracking-wide">
-                          {activeTranscription.title}
-                        </h3>
-                      </div>
+                    {/* Header */}
+                    <div className="flex flex-col gap-2 border-b border-white/[0.06] pb-5">
+                      <h3 className="font-editorial text-2xl sm:text-3xl text-[#f5f2ec] font-normal tracking-wide">
+                        Your MIDI is ready
+                      </h3>
+                      <p className="text-xs sm:text-sm text-[#8f8a80] font-sans flex flex-wrap items-center gap-1.5">
+                        <span className="text-[#ede8df] font-tabular font-medium">
+                          {activeTranscription.notes.length} notes
+                        </span>
+                        <span aria-hidden="true" className="text-[#555048]">·</span>
+                        <span className="text-[#ede8df] font-tabular">
+                          {activeTranscription.tracks.length || activeTranscription.instruments.length || 1} {(activeTranscription.tracks.length || activeTranscription.instruments.length || 1) === 1 ? 'instrument' : 'instruments'}
+                        </span>
+                        {activeTranscription.tempo ? (
+                          <>
+                            <span aria-hidden="true" className="text-[#555048]">·</span>
+                            <span className="text-[#ede8df] font-tabular">
+                              {Math.round(activeTranscription.tempo)} BPM
+                            </span>
+                          </>
+                        ) : null}
+                      </p>
 
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <button
-                          onClick={() => handleDownloadMireloMidiDirect(activeTranscription.midiDebug?.jobId || activeJobId || undefined)}
-                          className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-sans font-medium bg-[#1a1a22] hover:bg-[#242430] text-[#ede8df] rounded-md border border-white/[0.08] cursor-pointer transition-all shrink-0"
-                          title="Download binary .mid file"
-                        >
-                          <Download className="w-3.5 h-3.5 text-[#c5a059]" />
-                          <span>Download MIDI</span>
-                        </button>
-
+                      {/* Action Buttons: Full width on phones, 44px minimum tap height */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-3">
                         <button
                           onClick={() => handleOpenMireloMidiInStudio(activeTranscription.midiDebug?.jobId || activeJobId || undefined)}
-                          className="flex items-center gap-2 px-4 py-2 text-xs font-sans font-semibold bg-[#c5a059] hover:bg-[#d8ba7f] text-[#09090b] rounded-md shadow-lg cursor-pointer transition-all shrink-0"
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] text-xs sm:text-sm font-sans font-semibold bg-[#c5a059] hover:bg-[#d8ba7f] text-[#09090b] rounded-md shadow-lg cursor-pointer transition-all shrink-0"
                         >
                           <span>Open in Studio</span>
                           <ArrowRight className="w-4 h-4" />
                         </button>
+
+                        <button
+                          onClick={() => handleDownloadMireloMidiDirect(activeTranscription.midiDebug?.jobId || activeJobId || undefined)}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-sans font-medium bg-[#1a1a22] hover:bg-[#242430] text-[#ede8df] rounded-md border border-white/[0.08] cursor-pointer transition-all shrink-0"
+                          title="Download MIDI (.mid file)"
+                        >
+                          <Download className="w-4 h-4 text-[#c5a059]" />
+                          <span>Download MIDI</span>
+                        </button>
                       </div>
                     </div>
 
-                  {/* Summary Metric Stats */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#0e0e11] border border-white/[0.05] p-3.5 rounded-md text-xs font-sans">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-[#787369] uppercase tracking-wider">Total Notes</span>
-                      <span className="text-[#f5f2ec] font-tabular font-semibold text-base">{activeTranscription.notes.length}</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-[#787369] uppercase tracking-wider">Instruments</span>
-                      <span className="text-[#c5a059] font-tabular font-semibold text-base">{activeTranscription.instruments.length || 1}</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-[#787369] uppercase tracking-wider">Detected Chords</span>
-                      <span className="text-[#f5f2ec] font-tabular font-semibold text-base">{activeTranscription.chords.length}</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-[#787369] uppercase tracking-wider">Detected Tempo</span>
-                      <span className="text-[#f5f2ec] font-tabular font-semibold text-base">{activeTranscription.tempo || 120} BPM</span>
-                    </div>
-                  </div>
-
-                  {/* Detected Instruments / Tracks Selector */}
-                  <div className="flex flex-col gap-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs font-sans font-medium text-[#c9c4b9]">
-                        <Layers className="w-3.5 h-3.5 text-[#c5a059]" />
-                        <span>Detected Instrument Tracks</span>
+                    {/* Below: Instrument tracks list */}
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-sans font-medium uppercase tracking-wider text-[#c5a059]">
+                          Instrument tracks
+                        </h4>
+                        <span className="text-[11px] text-[#787369] font-sans">
+                          {activeTranscription.tracks.length} {activeTranscription.tracks.length === 1 ? 'track' : 'tracks'}
+                        </span>
                       </div>
-                      <span className="text-[11px] text-[#787369] font-sans">
-                        Select which stems to load into the piano roll
-                      </span>
-                    </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {activeTranscription.tracks.map(trk => {
-                        const isSelected = selectedTrackIds.includes(trk.id);
-                        return (
-                          <button
+                      <div className="flex flex-col divide-y divide-white/[0.04] bg-[#0c0c0f] border border-white/[0.05] rounded-lg overflow-hidden">
+                        {activeTranscription.tracks.map((trk) => (
+                          <div
                             key={trk.id}
-                            onClick={() => handleToggleTrack(trk.id)}
-                            className={`p-3 rounded-md border text-left cursor-pointer transition-all flex items-center justify-between ${
-                              isSelected 
-                                ? 'bg-[#18181e] border-[#c5a059]/50 text-[#f5f2ec]' 
-                                : 'bg-[#121215] border-white/[0.04] text-[#787369] hover:bg-[#16161a]'
-                            }`}
+                            className="flex items-center justify-between gap-3 px-4 py-3 min-h-[44px]"
                           >
-                            <div className="flex items-center gap-2.5">
-                              <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-[#c5a059]' : 'bg-[#3b3832]'}`} />
-                              <div className="flex flex-col">
-                                <span className="text-xs font-sans font-medium">{trk.name}</span>
-                                <span className="text-[10px] text-[#787369]">{trk.notes.length} notes</span>
-                              </div>
-                            </div>
-                            <span className={`text-[10px] font-sans px-2 py-0.5 rounded border ${
-                              isSelected ? 'bg-[#c5a059]/15 text-[#d8ba7f] border-[#c5a059]/30' : 'bg-white/[0.02] text-[#6d6860] border-transparent'
-                            }`}>
-                              {isSelected ? 'Active Stem' : 'Muted'}
+                            <span className="text-xs sm:text-sm font-sans font-medium text-[#ede8df] truncate min-w-0 flex-1">
+                              {formatTrackName(trk.name)}
                             </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Detected Chords Harmonic Progression Timeline */}
-                  {activeTranscription.chords.length > 0 && (
-                    <div className="flex flex-col gap-2.5">
-                      <div className="flex items-center gap-2 text-xs font-sans font-medium text-[#c9c4b9]">
-                        <Music className="w-3.5 h-3.5 text-[#c5a059]" />
-                        <span>Detected Chords &amp; Harmony</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 p-3 bg-[#0e0e11] border border-white/[0.05] rounded-md">
-                        {activeTranscription.chords.map((chord, idx) => (
-                          <div 
-                            key={`chord-${idx}`}
-                            className="flex flex-col items-center px-2.5 py-1.5 rounded bg-[#16161b] border border-white/[0.06] text-xs font-sans"
-                          >
-                            <span className="font-editorial text-sm text-[#f5f2ec] font-medium">{chord.chord}</span>
-                            <span className="text-[9px] text-[#787369] font-tabular">{(chord.time / 1000).toFixed(1)}s</span>
+                            <span className="text-xs text-[#787369] font-sans font-tabular shrink-0">
+                              {trk.notes.length} notes
+                            </span>
                           </div>
                         ))}
                       </div>
                     </div>
-                  )}
 
-                  {/* Optional Source Audio Reference Player (Transcription area only) */}
-                  {(activeTranscription.audioUrl || transcribeFile?.audioUrl) && (
-                    <div className="flex flex-col gap-2 p-3.5 bg-[#0e0e11] border border-white/[0.06] rounded-md">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs font-sans font-medium text-[#c9c4b9]">
-                          <Volume2 className="w-3.5 h-3.5 text-[#c5a059]" />
-                          <span>Original Source Audio (Reference / Comparison)</span>
-                        </div>
-                        <span className="text-[10px] text-[#787369]">Isolated to transcription tab</span>
-                      </div>
-                      <audio
-                        controls
-                        src={activeTranscription.audioUrl || transcribeFile?.audioUrl}
-                        className="w-full h-8 outline-none"
-                        preload="metadata"
-                      />
-                    </div>
-                  )}
-
-                </div>
+                  </div>
               </div>
             )}
 
