@@ -64,6 +64,9 @@ import {
   createSyncVerificationSuite
 } from './utils/audioWavGenerator';
 import { createMIDIFileBuffer } from './utils/midiEncoder';
+import type { Session } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
+import { AuthScreen } from './components/AuthScreen';
 
 // Visual themes refined for quiet, sophisticated piano studio aesthetics
 interface Theme {
@@ -249,6 +252,32 @@ export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'player' | 'transcriber'>('player');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  // Authentication State
+  const [session, setSession] = useState<Session | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (isMounted) {
+        setSession(session);
+        setIsAuthLoading(false);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setSession(session);
+        setIsAuthLoading(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Player State
   const [songs, setSongs] = useState<Song[]>(SAMPLE_SONGS);
@@ -2286,6 +2315,18 @@ export default function App() {
     synthInstance.silenceAll();
   };
 
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#09090b]">
+        <div className="w-6 h-6 border-2 border-[#c5a059] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#09090b] text-[#ede8df] selection:bg-[#c5a059]/20 selection:text-[#f4f0e6]">
       
@@ -2344,15 +2385,25 @@ export default function App() {
           )}
         </div>
 
-        {/* Hamburger / Menu toggle on the right */}
-        <div className="relative">
+        {/* Right side actions & Menu */}
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setIsMenuOpen(prev => !prev)}
-            aria-label="Studio menu"
-            className="flex items-center gap-2 p-2 rounded-md border border-white/[0.08] bg-[#141417] text-[#c9c4b9] hover:text-[#f5f2ec] hover:border-white/[0.18] hover:bg-[#1a1a20] transition-colors cursor-pointer"
+            onClick={() => supabase.auth.signOut()}
+            className="px-2.5 py-1 text-xs font-sans text-[#8f8a80] hover:text-[#ede8df] hover:bg-white/[0.04] rounded-md transition-colors cursor-pointer border border-white/[0.06]"
+            title="Sign out"
           >
-            {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            Log out
           </button>
+
+          {/* Hamburger / Menu toggle on the right */}
+          <div className="relative">
+            <button
+              onClick={() => setIsMenuOpen(prev => !prev)}
+              aria-label="Studio menu"
+              className="flex items-center gap-2 p-2 rounded-md border border-white/[0.08] bg-[#141417] text-[#c9c4b9] hover:text-[#f5f2ec] hover:border-white/[0.18] hover:bg-[#1a1a20] transition-colors cursor-pointer"
+            >
+              {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
 
           {/* Minimal Floating Drawer / Dropdown */}
           {isMenuOpen && (
@@ -2438,6 +2489,7 @@ export default function App() {
               </div>
             </>
           )}
+        </div>
         </div>
 
         {/* Hidden File Input */}
