@@ -220,6 +220,31 @@ const PianoKeyboard = React.memo(function PianoKeyboard({
   );
 });
 
+export const isRhythmTrack = (track: { name?: string; notes?: { channel?: number }[] }): boolean => {
+  if (!track) return false;
+  const name = (track.name || '').toLowerCase();
+  if (name.includes('drum') || name.includes('percussion')) {
+    return true;
+  }
+  const notes = track.notes || [];
+  if (notes.length > 0) {
+    const ch9Count = notes.filter(n => n.channel === 9).length;
+    if (ch9Count > notes.length / 2) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const getDefaultTrackIds = (tracks?: { id: string; name?: string; notes?: { channel?: number }[] }[]): string[] => {
+  if (!tracks || tracks.length === 0) return [];
+  const nonRhythmic = tracks.filter(t => !isRhythmTrack(t)).map(t => t.id);
+  if (nonRhythmic.length === 0) {
+    return tracks.map(t => t.id);
+  }
+  return nonRhythmic;
+};
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'player' | 'transcriber'>('player');
@@ -331,6 +356,19 @@ export default function App() {
 
   // Active song object
   const activeSong = songs.find(s => s.id === selectedSongId) || songs[0];
+
+  // Reset selectedTrackIds every time a new song loads, so toggles never carry over
+  const prevSelectedSongIdRef = useRef<string>(selectedSongId);
+  useEffect(() => {
+    if (prevSelectedSongIdRef.current !== selectedSongId) {
+      prevSelectedSongIdRef.current = selectedSongId;
+      if (activeSong && activeSong.tracks && activeSong.tracks.length > 0) {
+        setSelectedTrackIds(getDefaultTrackIds(activeSong.tracks));
+      } else {
+        setSelectedTrackIds([]);
+      }
+    }
+  }, [selectedSongId, activeSong]);
 
   // Authoritative duration: Derived directly from MIDI song metadata or note events
   const effectiveDurationMs = useMemo(() => {
@@ -524,6 +562,10 @@ export default function App() {
         })),
         rawMidiUrl: `/api/transcribe/midi-file/${jobId}`,
       };
+
+      if (newSong.tracks && newSong.tracks.length > 0) {
+        setSelectedTrackIds(getDefaultTrackIds(newSong.tracks));
+      }
 
       setSongs(prev => [newSong, ...prev.filter(s => s.id !== newSong.id)]);
       setSelectedSongId(newSong.id);
@@ -1887,6 +1929,10 @@ export default function App() {
         })),
         rawMidiUrl: `/api/transcribe/midi-file/${jobId}`,
       };
+
+      if (newSong.tracks && newSong.tracks.length > 0) {
+        setSelectedTrackIds(getDefaultTrackIds(newSong.tracks));
+      }
 
       console.log(`[Mirelo Direct] Song notes.length after applyCompletedTranscription: ${newSong.notes.length}`);
     } catch (err: any) {
@@ -4015,53 +4061,68 @@ export default function App() {
                     </div>
 
                     {/* Below: Instrument tracks list */}
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-sans font-medium uppercase tracking-wider text-[#c5a059]">
-                          Instrument tracks
-                        </h4>
-                        <span className="text-[11px] text-[#787369] font-sans">
-                          {activeTranscription.tracks.length} {activeTranscription.tracks.length === 1 ? 'track' : 'tracks'}
-                        </span>
-                      </div>
+                    {(() => {
+                      const currentJobId = activeTranscription.midiDebug?.jobId || activeJobId || activeTranscription.metadata?.jobId;
+                      const isCurrentSongFromTranscription = Boolean(
+                        currentJobId && 
+                        activeSong?.id?.startsWith(`transcribed-${currentJobId}`) && 
+                        activeSong.tracks && 
+                        activeSong.tracks.length > 0
+                      );
+                      const displayTracks = isCurrentSongFromTranscription && activeSong.tracks
+                        ? activeSong.tracks
+                        : activeTranscription.tracks;
 
-                      <div className="flex flex-col divide-y divide-white/[0.04] bg-[#0c0c0f] border border-white/[0.05] rounded-lg overflow-hidden">
-                        {activeTranscription.tracks.map((trk) => {
-                          const isSelected = selectedTrackIds.includes(trk.id);
-                          return (
-                            <button
-                              key={trk.id}
-                              type="button"
-                              onClick={() => handleToggleTrack(trk.id)}
-                              className={`w-full flex items-center justify-between gap-3 px-4 py-3 min-h-[44px] text-left cursor-pointer transition-colors ${
-                                isSelected ? 'bg-[#14141a]/60 hover:bg-[#181822]' : 'bg-transparent hover:bg-white/[0.02]'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-[#c5a059]' : 'bg-[#3b3832]'}`} />
-                                <span className={`text-xs sm:text-sm font-sans font-medium truncate ${
-                                  isSelected ? 'text-[#ede8df]' : 'text-[#787369]'
-                                }`}>
-                                  {formatTrackName(trk.name)}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3 shrink-0">
-                                <span className="text-xs text-[#787369] font-sans font-tabular">
-                                  {trk.notes.length} notes
-                                </span>
-                                <span className={`text-[11px] font-sans font-medium px-2 py-0.5 rounded border ${
-                                  isSelected 
-                                    ? 'bg-[#c5a059]/15 text-[#d8ba7f] border-[#c5a059]/30' 
-                                    : 'bg-white/[0.02] text-[#6d6860] border-white/[0.05]'
-                                }`}>
-                                  {isSelected ? 'On' : 'Off'}
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                      return (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-sans font-medium uppercase tracking-wider text-[#c5a059]">
+                              Instrument tracks
+                            </h4>
+                            <span className="text-[11px] text-[#787369] font-sans">
+                              {displayTracks.length} {displayTracks.length === 1 ? 'track' : 'tracks'}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-col divide-y divide-white/[0.04] bg-[#0c0c0f] border border-white/[0.05] rounded-lg overflow-hidden">
+                            {displayTracks.map((trk) => {
+                              const isSelected = selectedTrackIds.includes(trk.id);
+                              return (
+                                <button
+                                  key={trk.id}
+                                  type="button"
+                                  onClick={() => handleToggleTrack(trk.id)}
+                                  className={`w-full flex items-center justify-between gap-3 px-4 py-3 min-h-[44px] text-left cursor-pointer transition-colors ${
+                                    isSelected ? 'bg-[#14141a]/60 hover:bg-[#181822]' : 'bg-transparent hover:bg-white/[0.02]'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                    <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-[#c5a059]' : 'bg-[#3b3832]'}`} />
+                                    <span className={`text-xs sm:text-sm font-sans font-medium truncate ${
+                                      isSelected ? 'text-[#ede8df]' : 'text-[#787369]'
+                                    }`}>
+                                      {formatTrackName(trk.name)}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    <span className="text-xs text-[#787369] font-sans font-tabular">
+                                      {trk.notes.length} notes
+                                    </span>
+                                    <span className={`text-[11px] font-sans font-medium px-2 py-0.5 rounded border ${
+                                      isSelected 
+                                        ? 'bg-[#c5a059]/15 text-[#d8ba7f] border-[#c5a059]/30' 
+                                        : 'bg-white/[0.02] text-[#6d6860] border-white/[0.05]'
+                                    }`}>
+                                      {isSelected ? 'On' : 'Off'}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Original audio player */}
                     {(activeTranscription.audioUrl || transcribeFile?.audioUrl) && (
