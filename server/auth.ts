@@ -3,7 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 let supabaseClient: SupabaseClient | null = null;
 
-function getSupabaseServerClient(): SupabaseClient | null {
+export function getSupabaseAdmin(): SupabaseClient | null {
   if (supabaseClient) {
     return supabaseClient;
   }
@@ -29,7 +29,7 @@ function getSupabaseServerClient(): SupabaseClient | null {
 }
 
 export async function requireUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdmin();
   if (!supabase) {
     res.status(503).json({
       success: false,

@@ -42,6 +42,9 @@ export const AuthScreen: React.FC = () => {
     if (lower.includes('rate limit') || lower.includes('too many requests')) {
       return 'Too many attempts. Please wait a moment and try again.';
     }
+    if (lower.includes('is invalid') || lower.includes('invalid email')) {
+      return "That email wasn't accepted. Please use a real email address you can open.";
+    }
     if (lower.includes('valid email')) {
       return 'Please enter a valid email address.';
     }
