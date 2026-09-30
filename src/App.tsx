@@ -69,6 +69,18 @@ import { supabase } from './lib/supabase';
 import { AuthScreen } from './components/AuthScreen';
 import { authFetch } from './lib/authFetch';
 
+export interface LibraryMidiItem {
+  jobId: string;
+  sourceName: string;
+  cleanTitle: string;
+  audioSeconds: number;
+  noteCount: number;
+  tempoBpm: number | null;
+  completedAt: string;
+  storagePath: string;
+  sizeBytes: number;
+}
+
 // Visual themes refined for quiet, sophisticated piano studio aesthetics
 interface Theme {
   name: string;
@@ -320,11 +332,17 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeProgress, setTranscribeProgress] = useState<TranscriptionProgress | null>(null);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
+  const [transcribeErrorCode, setTranscribeErrorCode] = useState<string | null>(null);
   const [activeTranscription, setActiveTranscription] = useState<NormalizedTranscription | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [manualJobIdInput, setManualJobIdInput] = useState<string>('');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [transcriptionHistory, setTranscriptionHistory] = useState<NormalizedTranscription[]>([]);
+
+  // "Your MIDIs" Library State
+  const [libraryItems, setLibraryItems] = useState<LibraryMidiItem[]>([]);
+  const [isLibraryLoading, setIsLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [isDebugMode, setIsDebugMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -1998,8 +2016,120 @@ export default function App() {
       setActiveTab('player');
     }
 
+    // Refresh library when a transcription completes
+    fetchLibraryMIDIsRef.current();
+
     addDiagnosticLog('success', `[Studio Transition] Active song updated to "${newSong.title}" (${newSong.notes.length} notes, ${newSong.tracks?.length || 1} tracks).`);
   }, []);
+
+  // Library Ref & Fetch Implementation
+  const formatAudioDuration = (seconds: number): string => {
+    if (!seconds || isNaN(seconds) || seconds <= 0) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatCompletedDate = (isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const fetchLibraryMIDIsRef = useRef<() => void>(() => {});
+
+  const fetchLibraryMIDIs = useCallback(async () => {
+    if (!session?.user?.id) {
+      setLibraryItems([]);
+      setIsLibraryLoading(false);
+      setLibraryError(null);
+      return;
+    }
+
+    setIsLibraryLoading(true);
+    setLibraryError(null);
+
+    try {
+      // (a) transcription_jobs where status = 'succeeded', newest first by completed_at
+      const { data: jobs, error: jobsError } = await supabase
+        .from('transcription_jobs')
+        .select('id, source_name, audio_seconds, note_count, tempo_bpm, status, completed_at, created_at')
+        .eq('status', 'succeeded')
+        .order('completed_at', { ascending: false });
+
+      if (jobsError) {
+        throw new Error("We couldn't load your MIDIs.");
+      }
+
+      if (!jobs || jobs.length === 0) {
+        setLibraryItems([]);
+        setIsLibraryLoading(false);
+        return;
+      }
+
+      // (b) midi_files for those job ids
+      const jobIds = jobs.map((j: any) => j.id);
+      const { data: files, error: filesError } = await supabase
+        .from('midi_files')
+        .select('job_id, storage_path, size_bytes, note_count')
+        .in('job_id', jobIds);
+
+      if (filesError) {
+        throw new Error("We couldn't load your MIDIs.");
+      }
+
+      const filesByJobId = new Map<string, any>();
+      (files || []).forEach((f: any) => {
+        filesByJobId.set(f.job_id, f);
+      });
+
+      // Join them in code by job id. Only show jobs that have a midi_files row.
+      const items: LibraryMidiItem[] = [];
+      for (const job of jobs) {
+        const file = filesByJobId.get(job.id);
+        if (file) {
+          const rawName = job.source_name || 'Untitled';
+          // title = source_name without the file extension and with underscores turned into spaces
+          const cleanTitle = rawName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+          items.push({
+            jobId: job.id,
+            sourceName: rawName,
+            cleanTitle,
+            audioSeconds: Number(job.audio_seconds) || 0,
+            noteCount: file.note_count ?? job.note_count ?? 0,
+            tempoBpm: job.tempo_bpm ? Math.round(job.tempo_bpm) : null,
+            completedAt: job.completed_at || job.created_at,
+            storagePath: file.storage_path,
+            sizeBytes: file.size_bytes || 0,
+          });
+        }
+      }
+
+      setLibraryItems(items);
+    } catch (err: any) {
+      console.error('[Library] Failed to fetch MIDIs:', err?.message);
+      setLibraryError("We couldn't load your MIDIs.");
+    } finally {
+      setIsLibraryLoading(false);
+    }
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    fetchLibraryMIDIsRef.current = fetchLibraryMIDIs;
+  }, [fetchLibraryMIDIs]);
+
+  useEffect(() => {
+    fetchLibraryMIDIs();
+  }, [fetchLibraryMIDIs]);
 
   // Check Mirelo server backend configuration and restore active job if present
   useEffect(() => {
@@ -2149,6 +2279,7 @@ export default function App() {
 
     setIsTranscribing(true);
     setTranscribeError(null);
+    setTranscribeErrorCode(null);
     addDiagnosticLog('info', `Starting Mirelo Audio-to-MIDI Pro transcription for "${transcribeFile.name}"...`);
 
     let createdJobId = '';
@@ -2179,7 +2310,10 @@ export default function App() {
       applyCompletedTranscription(result, true, createdJobId);
     } catch (err: any) {
       let msg = err.message || 'Transcription failed';
-      if (msg.includes('did not match the expected pattern')) {
+      if (err.code === 'insufficient_credits') {
+        setTranscribeErrorCode('insufficient_credits');
+        msg = err.message;
+      } else if (msg.includes('did not match the expected pattern')) {
         msg = 'Invalid character in audio filename or request structure. The filename has been sanitized. Please try uploading again.';
       } else if (msg.includes('402') || msg.toLowerCase().includes('credit')) {
         msg = 'Transcription Credit Limit Exceeded: The audio file requires more processing credits than currently available. Please upload a shorter audio snippet (under 15-30 seconds), or click "Try Sample Recording" below.';
@@ -3788,54 +3922,64 @@ export default function App() {
               </div>
 
               {/* User-Friendly Error Message Banner */}
-              {transcribeError && (
-                <div className="bg-[#1c1214] border border-[#6b2930] p-4 rounded-lg flex items-start gap-3 text-xs w-full max-w-full">
-                  <AlertCircle className="w-4 h-4 text-[#e06c75] shrink-0 mt-0.5" />
-                  <div className="flex-1 flex flex-col gap-1.5 min-w-0">
-                    <span className="font-medium text-[#f5d6d8]">
-                      {transcribeError.includes('Credit Limit') || transcribeError.includes('402') 
-                        ? 'Transcription is temporarily unavailable' 
-                        : 'Something went wrong'}
-                    </span>
-                    <p className="text-[#d8a8ad] leading-relaxed">
-                      {transcribeError.includes('Credit Limit') || transcribeError.includes('402')
-                        ? 'Transcription is temporarily unavailable. Please try again later.'
-                        : 'We couldn’t finish preparing your MIDI. Please try again.'}
-                    </p>
-                    {isDebugMode && (transcribeError.includes('Credit Limit') || transcribeError.includes('402')) && (
-                      <div className="flex flex-wrap items-center gap-2 mt-1">
-                        <button
-                          onClick={handleTestWithSampleAudio}
-                          className="px-3 py-1.5 bg-[#c5a059]/20 border border-[#c5a059]/40 text-[#d8ba7f] hover:bg-[#c5a059]/30 rounded text-xs cursor-pointer font-sans min-h-[36px]"
-                        >
-                          Test with Sample Audio
-                        </button>
-                        <a
-                          href="https://mirelo.ai/studio/plan"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 bg-white/[0.05] border border-white/[0.1] text-[#ede8df] hover:bg-white/[0.1] rounded text-xs font-sans underline min-h-[36px] flex items-center"
-                        >
-                          Upgrade Plan
-                        </a>
-                      </div>
-                    )}
-                    {/* Detailed Technical Error - Only in Debug Mode */}
-                    {isDebugMode && (
-                      <div className="mt-2 p-2.5 bg-black/60 border border-white/[0.08] rounded font-mono text-[10px] text-[#e06c75] break-all select-all flex flex-col gap-1">
-                        <span className="text-[#787369] font-sans uppercase tracking-wider text-[9px]">Technical Diagnostic Log:</span>
-                        <span>{transcribeError}</span>
-                      </div>
-                    )}
+              {transcribeError && (() => {
+                const isInsufficient = transcribeErrorCode === 'insufficient_credits' || transcribeError.includes("don't have enough");
+                return (
+                  <div className="bg-[#1c1214] border border-[#6b2930] p-4 rounded-lg flex items-start gap-3 text-xs w-full max-w-full">
+                    <AlertCircle className="w-4 h-4 text-[#e06c75] shrink-0 mt-0.5" />
+                    <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                      <span className="font-medium text-[#f5d6d8]">
+                        {isInsufficient
+                          ? 'Not enough credits'
+                          : transcribeError.includes('Credit Limit') || transcribeError.includes('402') 
+                          ? 'Transcription is temporarily unavailable' 
+                          : 'Something went wrong'}
+                      </span>
+                      <p className="text-[#d8a8ad] leading-relaxed">
+                        {isInsufficient
+                          ? transcribeError
+                          : transcribeError.includes('Credit Limit') || transcribeError.includes('402')
+                          ? 'Transcription is temporarily unavailable. Please try again later.'
+                          : 'We couldn’t finish preparing your MIDI. Please try again.'}
+                      </p>
+                      {isDebugMode && !isInsufficient && (transcribeError.includes('Credit Limit') || transcribeError.includes('402')) && (
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <button
+                            onClick={handleTestWithSampleAudio}
+                            className="px-3 py-1.5 bg-[#c5a059]/20 border border-[#c5a059]/40 text-[#d8ba7f] hover:bg-[#c5a059]/30 rounded text-xs cursor-pointer font-sans min-h-[36px]"
+                          >
+                            Test with Sample Audio
+                          </button>
+                          <a
+                            href="https://mirelo.ai/studio/plan"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-white/[0.05] border border-white/[0.1] text-[#ede8df] hover:bg-white/[0.1] rounded text-xs font-sans underline min-h-[36px] flex items-center"
+                          >
+                            Upgrade Plan
+                          </a>
+                        </div>
+                      )}
+                      {/* Detailed Technical Error - Only in Debug Mode */}
+                      {isDebugMode && (
+                        <div className="mt-2 p-2.5 bg-black/60 border border-white/[0.08] rounded font-mono text-[10px] text-[#e06c75] break-all select-all flex flex-col gap-1">
+                          <span className="text-[#787369] font-sans uppercase tracking-wider text-[9px]">Technical Diagnostic Log:</span>
+                          <span>{transcribeError}</span>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setTranscribeError(null);
+                        setTranscribeErrorCode(null);
+                      }}
+                      className="text-[#966b70] hover:text-[#f5d6d8] text-xs cursor-pointer px-2 py-1 shrink-0"
+                    >
+                      Dismiss
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setTranscribeError(null)}
-                    className="text-[#966b70] hover:text-[#f5d6d8] text-xs cursor-pointer px-2 py-1 shrink-0"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Progress Bar & Real-time Status */}
               {(isTranscribing || transcribeProgress !== null) && (
@@ -4225,6 +4369,83 @@ export default function App() {
                   </div>
               </div>
             )}
+
+              {/* Section: Your MIDIs */}
+              <div className="bg-[#111114] border border-white/[0.06] p-5 sm:p-6 rounded-lg flex flex-col gap-4 shadow-lg w-full">
+                <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <Music className="w-4 h-4 text-[#c5a059]" />
+                    <h3 className="font-editorial text-xl sm:text-2xl text-[#f5f2ec] font-normal tracking-wide">
+                      Your MIDIs
+                    </h3>
+                  </div>
+                  {!isLibraryLoading && !libraryError && libraryItems.length > 0 && (
+                    <span className="text-xs text-[#787369] font-sans font-tabular">
+                      {libraryItems.length} {libraryItems.length === 1 ? 'file' : 'files'}
+                    </span>
+                  )}
+                </div>
+
+                {isLibraryLoading ? (
+                  /* Loading skeleton */
+                  <div className="flex flex-col divide-y divide-white/[0.04]">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="py-3 px-1 min-h-[44px] flex flex-col justify-center gap-1.5 animate-pulse">
+                        <div className="h-4 bg-white/[0.06] rounded w-48 max-w-[60%]" />
+                        <div className="h-3 bg-white/[0.03] rounded w-64 max-w-[80%]" />
+                      </div>
+                    ))}
+                  </div>
+                ) : libraryError ? (
+                  /* Friendly error state with Retry button */
+                  <div className="py-6 flex flex-col items-center justify-center gap-3 text-center">
+                    <p className="text-xs sm:text-sm text-[#d8a8ad] font-sans">
+                      {libraryError}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => fetchLibraryMIDIs()}
+                      className="px-4 py-2 min-h-[44px] bg-[#1a1a22] hover:bg-[#252532] border border-white/[0.1] text-[#ede8df] hover:text-[#f5f2ec] text-xs font-sans rounded-md transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-[#c5a059]" />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                ) : libraryItems.length === 0 ? (
+                  /* Empty state */
+                  <div className="py-8 text-center flex flex-col items-center justify-center gap-1 text-xs text-[#787369] font-sans">
+                    <p className="text-[#a8a398]">Your MIDIs will appear here.</p>
+                  </div>
+                ) : (
+                  /* MIDIs List */
+                  <div className="flex flex-col divide-y divide-white/[0.04]">
+                    {libraryItems.map((item) => (
+                      <div
+                        key={item.jobId}
+                        className="py-3 px-1 min-h-[44px] flex flex-col justify-center gap-1 transition-colors rounded"
+                      >
+                        <span className="font-editorial text-base text-[#ede8df] truncate" title={item.cleanTitle}>
+                          {item.cleanTitle}
+                        </span>
+                        <span className="text-xs text-[#787369] font-sans font-tabular">
+                          {(() => {
+                            const parts: string[] = [`${item.noteCount} notes`];
+                            if (item.tempoBpm) {
+                              parts.push(`${item.tempoBpm} BPM`);
+                            }
+                            parts.push(formatAudioDuration(item.audioSeconds));
+                            const dateStr = formatCompletedDate(item.completedAt);
+                            if (dateStr) {
+                              parts.push(dateStr);
+                            }
+                            return parts.join(' · ');
+                          })()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Transcription History */}
               {transcriptionHistory.length > 0 && (

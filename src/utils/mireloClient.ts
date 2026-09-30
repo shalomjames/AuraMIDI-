@@ -74,6 +74,11 @@ export async function submitAudioToMirelo(file: File): Promise<{
       }
 
       if (!res.ok || !data.success) {
+        if (res.status === 402 && data?.code === 'insufficient_credits') {
+          const err: any = new Error(data.error || "You don't have enough credits for this song.");
+          err.code = 'insufficient_credits';
+          throw err;
+        }
         throw new Error(data.error || `Server returned ${res.status}: ${res.statusText}`);
       }
 
