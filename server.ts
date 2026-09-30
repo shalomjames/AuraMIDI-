@@ -17,6 +17,16 @@ import {
 import { NormalizedTranscription } from './src/types/transcription.js';
 import { createMIDIFileBuffer } from './src/utils/midiEncoder.js';
 import { requireUser } from './server/auth.js';
+import {
+  getAudioSeconds,
+  costForSeconds,
+  startJob,
+  attachMireloJob,
+  failJob,
+  completeJob,
+  getOwnedJob,
+  sweepStaleJobs,
+} from './server/jobs.js';
 
 dotenv.config();
 
@@ -59,14 +69,77 @@ app.post('/api/transcribe/submit', requireUser, upload.single('audio'), async (r
     return;
   }
 
-  console.log(`[Server:Submit] Received audio upload for "${file.originalname}" (${(file.size / 1024).toFixed(1)} KB)`);
+  const userId = res.locals.user.id;
 
+  // 1. Audio duration check
+  let seconds: number;
+  try {
+    seconds = await getAudioSeconds(file.buffer, file.mimetype);
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err.message || "We couldn't read the length of this audio.",
+    });
+    return;
+  }
+
+  // 2. Start persistent job and reserve credits
+  let started;
+  try {
+    started = await startJob({
+      userId,
+      sourceName: file.originalname,
+      seconds,
+    });
+  } catch (_err: any) {
+    res.status(503).json({
+      success: false,
+      error: "We couldn't start your transcription. You have not been charged.",
+    });
+    return;
+  }
+
+  // 3. Verify sufficient credits
+  if (!started.ok) {
+    res.status(402).json({
+      success: false,
+      code: "insufficient_credits",
+      error: `This song needs ${costForSeconds(seconds)} credits and you don't have enough.`,
+    });
+    return;
+  }
+
+  console.log(`[Server:Submit] Received audio upload for "${file.originalname}" (${(file.size / 1024).toFixed(1)} KB, ${seconds.toFixed(1)}s, ${started.cost} credits)`);
+
+  // 4 & 5. Submit to Mirelo upstream and attach job
   try {
     const jobResult = await submitMireloJob(
       file.buffer,
       file.originalname,
       file.mimetype || 'audio/wav'
     );
+
+    await attachMireloJob(started.jobId, jobResult.jobId);
+
+    // If jobResult.status === 'succeeded' (Mirelo returned a cached result)
+    if (jobResult.status === 'succeeded') {
+      const buffer = getMireloMidiBuffer(jobResult.jobId);
+      const row = await getOwnedJob(userId, jobResult.jobId);
+      if (buffer && row) {
+        try {
+          await completeJob(row, buffer);
+        } catch (_compErr: any) {
+          res.json({
+            success: true,
+            jobId: jobResult.jobId,
+            status: 'processing',
+            fileName: jobResult.fileName,
+            data: null,
+          });
+          return;
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -76,11 +149,13 @@ app.post('/api/transcribe/submit', requireUser, upload.single('audio'), async (r
       data: jobResult.data || null,
     });
   } catch (err: any) {
-    console.error(`[Server:SubmitError]`, err.message);
-    const statusCode = err.message.includes('MIRELO_API_KEY') ? 401 : 500;
-    res.status(statusCode).json({
+    try {
+      await failJob(started.jobId, userId, 'Transcription could not be started.');
+    } catch {}
+    console.error(`[Server:SubmitError] Failed to submit/attach Mirelo job for user ${userId}:`, err?.message);
+    res.status(500).json({
       success: false,
-      error: err.message || 'Failed to submit transcription job',
+      error: "We couldn't start your transcription. You have not been charged.",
     });
   }
 });
@@ -95,8 +170,112 @@ app.get('/api/transcribe/status/:jobId', requireUser, async (req: Request, res: 
     return;
   }
 
+  const userId = res.locals.user.id;
+  const job = await getOwnedJob(userId, jobId);
+  if (!job) {
+    res.status(404).json({ success: false, error: 'Transcription not found.' });
+    return;
+  }
+
+  if (job.status === 'failed') {
+    res.status(200).json({
+      success: true,
+      jobId,
+      status: 'failed',
+      progress: 0,
+      message: '',
+      data: null,
+      midiDebug: null,
+      error: "This transcription couldn't be completed. You won't be charged.",
+    });
+    return;
+  }
+
   try {
     const statusResult = await getMireloJobStatus(jobId, fileNameFallback);
+
+    if (statusResult.status === 'failed') {
+      try {
+        await failJob(job.id, userId, 'Transcription failed.');
+      } catch (fErr: any) {
+        console.error(`[Server:Status] failJob error for ${job.id}:`, fErr?.message);
+      }
+      res.json({
+        success: true,
+        jobId: statusResult.jobId || jobId,
+        status: 'failed',
+        progress: 0,
+        message: statusResult.message || '',
+        data: null,
+        midiDebug: statusResult.midiDebug || null,
+        error: "We couldn't transcribe this audio. You won't be charged.",
+      });
+      return;
+    }
+
+    if (statusResult.status === 'succeeded' && job.status !== 'succeeded') {
+      const buffer = getMireloMidiBuffer(jobId);
+      if (!buffer) {
+        res.json({
+          success: true,
+          jobId: statusResult.jobId || jobId,
+          status: 'processing',
+          progress: 95,
+          message: 'Finishing up...',
+          data: null,
+          midiDebug: statusResult.midiDebug || null,
+          error: null,
+        });
+        return;
+      }
+
+      try {
+        await completeJob(job, buffer);
+      } catch (cErr: any) {
+        console.error(`[Server:Status] completeJob error for ${job.id}:`, cErr?.message);
+        res.json({
+          success: true,
+          jobId: statusResult.jobId || jobId,
+          status: 'processing',
+          progress: 95,
+          message: 'Saving your MIDI...',
+          data: null,
+          midiDebug: statusResult.midiDebug || null,
+          error: null,
+        });
+        return;
+      }
+
+      const updatedJob = await getOwnedJob(userId, jobId);
+      if (updatedJob?.status === 'failed') {
+        res.json({
+          success: true,
+          jobId: statusResult.jobId || jobId,
+          status: 'failed',
+          progress: 0,
+          message: '',
+          data: null,
+          midiDebug: statusResult.midiDebug || null,
+          error: "No notes could be found in this audio. You won't be charged.",
+        });
+        return;
+      }
+
+      if (updatedJob?.status === 'succeeded') {
+        res.json({
+          success: true,
+          jobId: statusResult.jobId || jobId,
+          status: 'succeeded',
+          progress: 100,
+          message: statusResult.message || '',
+          data: statusResult.data || null,
+          midiDebug: statusResult.midiDebug || null,
+          error: null,
+        });
+        return;
+      }
+    }
+
     res.json({
       success: true,
       jobId: statusResult.jobId || jobId,
@@ -108,12 +287,12 @@ app.get('/api/transcribe/status/:jobId', requireUser, async (req: Request, res: 
       error: statusResult.error || null,
     });
   } catch (err: any) {
-    console.error(`[Server:StatusError] ${jobId}:`, err.message);
+    console.error(`[Server:StatusError] ${jobId}:`, err?.message);
     res.status(500).json({
       success: false,
       jobId,
       status: 'failed',
-      error: err.message || 'Failed to check job status',
+      error: "We couldn't check this transcription right now.",
     });
   }
 });
@@ -121,6 +300,18 @@ app.get('/api/transcribe/status/:jobId', requireUser, async (req: Request, res: 
 // 3b. Serve Raw Binary .MID File Endpoint for exact MIDI player feeding & direct downloading
 app.get('/api/transcribe/midi-file/:jobId', requireUser, async (req: Request, res: Response) => {
   const jobId = cleanJobId(req.params.jobId);
+  if (!jobId) {
+    res.status(400).json({ success: false, error: 'Valid jobId parameter is required' });
+    return;
+  }
+
+  const userId = res.locals.user.id;
+  const job = await getOwnedJob(userId, jobId);
+  if (!job || job.status !== 'succeeded') {
+    res.status(404).json({ success: false, error: 'Transcription not found.' });
+    return;
+  }
+
   let buffer = getMireloMidiBuffer(jobId);
 
   if (!buffer) {
@@ -164,6 +355,13 @@ app.get('/api/transcribe/download-midi', requireUser, async (req: Request, res: 
 
   if (!jobId) {
     res.status(400).json({ success: false, error: 'jobId query parameter is required' });
+    return;
+  }
+
+  const userId = res.locals.user.id;
+  const job = await getOwnedJob(userId, jobId);
+  if (!job || job.status !== 'succeeded') {
+    res.status(404).json({ success: false, error: 'Transcription not found.' });
     return;
   }
 
@@ -239,41 +437,11 @@ app.get('/api/transcribe/debug/:jobId', (req: Request, res: Response) => {
 });
 
 // 4. Backward-compatible /api/transcribe endpoint
-app.post('/api/transcribe', requireUser, upload.single('audio'), async (req: Request, res: Response) => {
-  const file = req.file;
-
-  if (!file) {
-    res.status(400).json({
-      success: false,
-      error: 'No audio file provided in request. Please upload an MP3, WAV, FLAC, or M4A file under field name "audio".',
-    });
-    return;
-  }
-
-  console.log(`[Server] Received transcription POST for "${file.originalname}" (${(file.size / 1024).toFixed(1)} KB)`);
-
-  try {
-    const submitResult = await submitMireloJob(
-      file.buffer,
-      file.originalname,
-      file.mimetype || 'audio/wav'
-    );
-
-    res.json({
-      success: true,
-      jobId: submitResult.jobId,
-      status: submitResult.status,
-      fileName: submitResult.fileName,
-      data: submitResult.data || null,
-    });
-  } catch (err: any) {
-    console.error(`[Server:TranscribeError]`, err.message);
-    const statusCode = err.message.includes('MIRELO_API_KEY') ? 401 : 500;
-    res.status(statusCode).json({
-      success: false,
-      error: err.message || 'Transcription failed',
-    });
-  }
+app.post('/api/transcribe', requireUser, upload.single('audio'), async (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    error: 'This endpoint is no longer available.',
+  });
 });
 
 // 3. Development / Testing Sample Endpoint
@@ -391,6 +559,28 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[AuraMIDI] Server running on http://0.0.0.0:${PORT} (${isProduction ? 'production' : 'development'})`);
+
+    // Initial sweep for stale jobs
+    (async () => {
+      try {
+        await sweepStaleJobs();
+      } catch (err: any) {
+        console.error('[Server:Sweep] Initial sweep error:', err?.message);
+      }
+    })();
+
+    // Sweep every 10 minutes
+    const sweepInterval = setInterval(async () => {
+      try {
+        await sweepStaleJobs();
+      } catch (err: any) {
+        console.error('[Server:Sweep] Recurring sweep error:', err?.message);
+      }
+    }, 10 * 60 * 1000);
+
+    if (typeof sweepInterval.unref === 'function') {
+      sweepInterval.unref();
+    }
   });
 }
 

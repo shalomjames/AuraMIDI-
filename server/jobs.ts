@@ -38,7 +38,7 @@ export interface TranscriptionJobRow {
 export async function getAudioSeconds(buffer: Buffer, mime?: string): Promise<number> {
   let metadata;
   try {
-    metadata = await parseBuffer(buffer, mime ? { mimeType: mime } : undefined);
+    metadata = await parseBuffer(buffer, mime ? { mimeType: mime } : undefined, { duration: true });
   } catch (_err) {
     throw new Error("We couldn't read the length of this audio.");
   }
@@ -159,28 +159,45 @@ export async function failJob(jobId: string, userId: string, message: string): P
 
   const safeMessage = (message || 'Transcription failed').slice(0, 200);
 
-  const { data: updated, error: updateError } = await supabase
+  // (a) read the job's current status; if it is not created/uploading/processing, return;
+  const { data: job, error: fetchError } = await supabase
+    .from('transcription_jobs')
+    .select('status')
+    .eq('id', jobId)
+    .maybeSingle();
+
+  if (fetchError || !job) {
+    return;
+  }
+
+  const validStatuses = ['created', 'uploading', 'processing'];
+  if (!validStatuses.includes(job.status)) {
+    return;
+  }
+
+  // (b) call rpc('refund_credits') and check { error }; if there is an error, log the job id and THROW, leaving the status unchanged so the sweeper retries;
+  const { error: rpcError } = await supabase.rpc('refund_credits', {
+    p_user_id: userId,
+    p_job_id: jobId,
+  });
+
+  if (rpcError) {
+    console.error(`[Jobs:Refund] Failed to refund credits for job ${jobId}`);
+    throw new Error("Unable to refund credits.");
+  }
+
+  // (c) only then update status to 'failed' with the guard on the previous statuses.
+  const { error: updateError } = await supabase
     .from('transcription_jobs')
     .update({
       status: 'failed',
       error_message: safeMessage,
     })
     .eq('id', jobId)
-    .in('status', ['created', 'uploading', 'processing'])
-    .select('id');
+    .in('status', ['created', 'uploading', 'processing']);
 
-  if (updateError || !updated || updated.length === 0) {
-    return;
-  }
-
-  try {
-    await supabase.rpc('refund_credits', {
-      p_user_id: userId,
-      p_job_id: jobId,
-    });
-  } catch (_err) {
-    // Non-blocking log, fail state was already persisted
-    console.error(`[Jobs:Refund] Failed to refund credits for job ${jobId}`);
+  if (updateError) {
+    console.error(`[Jobs:Status] Failed to update status to failed for job ${jobId}`);
   }
 }
 
@@ -261,7 +278,8 @@ export async function completeJob(
     });
 
   if (storageError) {
-    console.error(`[Jobs:Storage] Upload failed for job ${job.id}:`, storageError.message);
+    console.error(`[Jobs:Storage] Upload failed for job ${job.id}`);
+    throw new Error("We couldn't save your MIDI right now. Please try again.");
   }
 
   // 2. Upsert midi_files row
@@ -280,7 +298,8 @@ export async function completeJob(
     );
 
   if (midiFileError) {
-    console.error(`[Jobs:DB] midi_files upsert failed for job ${job.id}:`, midiFileError.message);
+    console.error(`[Jobs:DB] midi_files upsert failed for job ${job.id}`);
+    throw new Error("We couldn't save your MIDI right now. Please try again.");
   }
 
   // 3. Update status to succeeded ONLY if still in created/uploading/processing
@@ -302,14 +321,14 @@ export async function completeJob(
   }
 
   const creditsToFinalize = updatedRows[0].credits_reserved ?? job.credits_reserved;
-  try {
-    await supabase.rpc('finalize_job_credits', {
-      p_user_id: job.user_id,
-      p_job_id: job.id,
-      p_final: creditsToFinalize,
-    });
-  } catch (err: any) {
-    console.error(`[Jobs:Credits] finalize_job_credits failed for job ${job.id}:`, err?.message);
+  const { error: finalizeError } = await supabase.rpc('finalize_job_credits', {
+    p_user_id: job.user_id,
+    p_job_id: job.id,
+    p_final: creditsToFinalize,
+  });
+
+  if (finalizeError) {
+    console.error(`[Jobs:Credits] finalize_job_credits failed for job ${job.id}`);
   }
 }
 
