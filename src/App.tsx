@@ -67,6 +67,7 @@ import { createMIDIFileBuffer } from './utils/midiEncoder';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { AuthScreen } from './components/AuthScreen';
+import { PricingScreen } from './components/PricingScreen';
 import { authFetch } from './lib/authFetch';
 
 export interface LibraryMidiItem {
@@ -343,6 +344,14 @@ export default function App() {
   const [libraryItems, setLibraryItems] = useState<LibraryMidiItem[]>([]);
   const [isLibraryLoading, setIsLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [workingJobId, setWorkingJobId] = useState<string | null>(null);
+  const [workingAction, setWorkingAction] = useState<'open' | 'download' | null>(null);
+  const [rowError, setRowError] = useState<{ jobId: string; message: string } | null>(null);
+
+  // Credit Balance & Pricing State
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [isCreditBalanceLoading, setIsCreditBalanceLoading] = useState(false);
+  const [isPricingOpen, setIsPricingOpen] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -1112,8 +1121,9 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e || !e.key) return;
       if (e.repeat) return;
-      if (document.activeElement?.tagName === 'INPUT') return;
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
       // Spacebar toggles sustain pedal
       if (e.code === 'Space') {
@@ -1132,6 +1142,7 @@ export default function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e || !e.key) return;
       const pitch = keyboardMap[e.key.toLowerCase()];
       if (pitch !== undefined) {
         synthInstance.stopNote(pitch);
@@ -2016,8 +2027,9 @@ export default function App() {
       setActiveTab('player');
     }
 
-    // Refresh library when a transcription completes
+    // Refresh library and credit balance when a transcription completes
     fetchLibraryMIDIsRef.current();
+    fetchCreditBalanceRef.current();
 
     addDiagnosticLog('success', `[Studio Transition] Active song updated to "${newSong.title}" (${newSong.notes.length} notes, ${newSong.tracks?.length || 1} tracks).`);
   }, []);
@@ -2131,6 +2143,163 @@ export default function App() {
     fetchLibraryMIDIs();
   }, [fetchLibraryMIDIs]);
 
+  const handleOpenLibraryMidiInStudio = async (item: LibraryMidiItem) => {
+    if (workingJobId) return;
+
+    const librarySongId = `library-${item.jobId}`;
+    const existingSong = songs.find(s => s.id === librarySongId);
+    if (existingSong) {
+      setSelectedSongId(existingSong.id);
+      if (existingSong.tracks && existingSong.tracks.length > 0) {
+        setSelectedTrackIds(getDefaultTrackIds(existingSong.tracks));
+      }
+      setCurrentTimeMs(0);
+      currentTimeMsRef.current = 0;
+      setIsPlaying(false);
+      notesScheduledTracker.current.clear();
+      synthInstance.silenceAll();
+      setActiveTab('player');
+      return;
+    }
+
+    setWorkingJobId(item.jobId);
+    setWorkingAction('open');
+    setRowError(null);
+
+    try {
+      const { data, error } = await supabase.storage
+        .from('midi-files')
+        .download(item.storagePath);
+
+      if (error || !data) {
+        throw error || new Error('Download failed');
+      }
+
+      const arrayBuffer = await data.arrayBuffer();
+      const parsed = parseMIDIFile(arrayBuffer, `${item.cleanTitle}.mid`);
+
+      const newSong: Song = {
+        id: librarySongId,
+        title: item.cleanTitle,
+        composer: `${parsed.numTracks || 1} ${parsed.numTracks === 1 ? 'Instrument' : 'Instruments'} · Audio to MIDI`,
+        difficulty: parsed.notes.length > 200 ? 'Advanced' : 'Intermediate',
+        genre: 'Transcribed Score',
+        durationMs: parsed.durationMs,
+        notes: parsed.notes,
+        bpm: parsed.bpm,
+        tracks: parsed.tracks.map(t => ({
+          id: t.id,
+          name: t.name,
+          instrument: t.instrument,
+          notes: t.notes,
+        })),
+      };
+
+      if (newSong.tracks && newSong.tracks.length > 0) {
+        setSelectedTrackIds(getDefaultTrackIds(newSong.tracks));
+      }
+
+      setSongs(prev => [newSong, ...prev.filter(s => s.id !== newSong.id)]);
+      setSelectedSongId(newSong.id);
+      setCurrentTimeMs(0);
+      currentTimeMsRef.current = 0;
+      setIsPlaying(false);
+      notesScheduledTracker.current.clear();
+      synthInstance.silenceAll();
+      setActiveTab('player');
+    } catch (err: any) {
+      console.error('[Library] Open in Studio error:', err?.message);
+      setRowError({
+        jobId: item.jobId,
+        message: "Couldn't open your MIDI. Please try again.",
+      });
+    } finally {
+      setWorkingJobId(null);
+      setWorkingAction(null);
+    }
+  };
+
+  const handleDownloadLibraryMidi = async (item: LibraryMidiItem) => {
+    if (workingJobId) return;
+
+    setWorkingJobId(item.jobId);
+    setWorkingAction('download');
+    setRowError(null);
+
+    try {
+      const { data, error } = await supabase.storage
+        .from('midi-files')
+        .download(item.storagePath);
+
+      if (error || !data) {
+        throw error || new Error('Download failed');
+      }
+
+      const cleanTitle = (item.cleanTitle || '')
+        .replace(/[/\\:*?"<>|]/g, '')
+        .trim();
+      const downloadName = cleanTitle ? `${cleanTitle}.mid` : 'Transcription.mid';
+
+      const blobUrl = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch (err: any) {
+      console.error('[Library] Download MIDI error:', err?.message);
+      setRowError({
+        jobId: item.jobId,
+        message: "Couldn't download your MIDI. Please try again.",
+      });
+    } finally {
+      setWorkingJobId(null);
+      setWorkingAction(null);
+    }
+  };
+
+  // Credit Balance Fetch Implementation
+  const fetchCreditBalanceRef = useRef<() => void>(() => {});
+
+  const fetchCreditBalance = useCallback(async () => {
+    if (!session?.user?.id) {
+      setCreditBalance(null);
+      setIsCreditBalanceLoading(false);
+      return;
+    }
+
+    setIsCreditBalanceLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('credit_balances')
+        .select('balance')
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[Credits] Could not fetch balance:', error.message);
+        setCreditBalance(0);
+      } else {
+        setCreditBalance(data?.balance ?? 0);
+      }
+    } catch (err: any) {
+      console.warn('[Credits] Exception loading balance:', err?.message);
+      setCreditBalance(0);
+    } finally {
+      setIsCreditBalanceLoading(false);
+    }
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    fetchCreditBalanceRef.current = fetchCreditBalance;
+  }, [fetchCreditBalance]);
+
+  // Load when user is signed in
+  useEffect(() => {
+    fetchCreditBalance();
+  }, [fetchCreditBalance]);
+
   // Check Mirelo server backend configuration and restore active job if present
   useEffect(() => {
     setIsCheckingConfig(true);
@@ -2180,6 +2349,7 @@ export default function App() {
   useEffect(() => {
     const handleMobileResume = () => {
       if (document.visibilityState === 'visible') {
+        fetchCreditBalanceRef.current();
         const savedJobId = localStorage.getItem('mirelo_active_job_id');
         const targetId = activeJobId || savedJobId;
         if (targetId && !isTranscribing) {
@@ -3776,6 +3946,28 @@ export default function App() {
 
             {/* Right Interactive Transcription Area (8 Columns) */}
             <div className="lg:col-span-8 flex flex-col gap-6">
+
+              {/* Credits Status & Action Row */}
+              <div className="flex items-center justify-between gap-3 bg-[#111114] border border-white/[0.06] px-4 py-2.5 rounded-lg shadow-sm">
+                <div className="flex items-center gap-2 text-xs font-sans text-[#a8a398]">
+                  <span className="text-[#787369]">Credits:</span>
+                  {isCreditBalanceLoading || creditBalance === null ? (
+                    <span className="inline-block w-16 h-4 bg-white/[0.06] rounded animate-pulse" />
+                  ) : (
+                    <span className="text-[#f5f2ec] font-tabular font-medium text-sm">
+                      {creditBalance.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPricingOpen(true)}
+                  className="min-h-[44px] px-3.5 py-2 bg-[#c5a059]/15 hover:bg-[#c5a059]/25 text-[#d8ba7f] hover:text-[#f5f2ec] border border-[#c5a059]/30 rounded-md text-xs font-sans font-medium transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[#c5a059]" />
+                  <span>Get credits</span>
+                </button>
+              </div>
               
               {/* Drag and Drop Zone Container */}
               <div 
@@ -3942,6 +4134,18 @@ export default function App() {
                           ? 'Transcription is temporarily unavailable. Please try again later.'
                           : 'We couldn’t finish preparing your MIDI. Please try again.'}
                       </p>
+                      {isInsufficient && (
+                        <div className="mt-2 flex items-center">
+                          <button
+                            type="button"
+                            onClick={() => setIsPricingOpen(true)}
+                            className="min-h-[44px] px-4 py-2 bg-[#c5a059] hover:bg-[#d8ba7f] text-[#09090b] font-sans font-semibold text-xs rounded transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Get credits</span>
+                          </button>
+                        </div>
+                      )}
                       {isDebugMode && !isInsufficient && (transcribeError.includes('Credit Limit') || transcribeError.includes('402')) && (
                         <div className="flex flex-wrap items-center gap-2 mt-1">
                           <button
@@ -4419,30 +4623,83 @@ export default function App() {
                 ) : (
                   /* MIDIs List */
                   <div className="flex flex-col divide-y divide-white/[0.04]">
-                    {libraryItems.map((item) => (
-                      <div
-                        key={item.jobId}
-                        className="py-3 px-1 min-h-[44px] flex flex-col justify-center gap-1 transition-colors rounded"
-                      >
-                        <span className="font-editorial text-base text-[#ede8df] truncate" title={item.cleanTitle}>
-                          {item.cleanTitle}
-                        </span>
-                        <span className="text-xs text-[#787369] font-sans font-tabular">
-                          {(() => {
-                            const parts: string[] = [`${item.noteCount} notes`];
-                            if (item.tempoBpm) {
-                              parts.push(`${item.tempoBpm} BPM`);
-                            }
-                            parts.push(formatAudioDuration(item.audioSeconds));
-                            const dateStr = formatCompletedDate(item.completedAt);
-                            if (dateStr) {
-                              parts.push(dateStr);
-                            }
-                            return parts.join(' · ');
-                          })()}
-                        </span>
-                      </div>
-                    ))}
+                    {libraryItems.map((item) => {
+                      const isThisRowWorking = workingJobId === item.jobId;
+                      const isAnyRowWorking = Boolean(workingJobId);
+
+                      return (
+                        <div
+                          key={item.jobId}
+                          className="py-3 px-1 min-h-[44px] flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors rounded"
+                        >
+                          <div className="flex flex-col gap-1 min-w-0 flex-1">
+                            <span className="font-editorial text-base text-[#ede8df] truncate" title={item.cleanTitle}>
+                              {item.cleanTitle}
+                            </span>
+                            <span className="text-xs text-[#787369] font-sans font-tabular">
+                              {(() => {
+                                const parts: string[] = [`${item.noteCount} notes`];
+                                if (item.tempoBpm) {
+                                  parts.push(`${item.tempoBpm} BPM`);
+                                }
+                                parts.push(formatAudioDuration(item.audioSeconds));
+                                const dateStr = formatCompletedDate(item.completedAt);
+                                if (dateStr) {
+                                  parts.push(dateStr);
+                                }
+                                return parts.join(' · ');
+                              })()}
+                            </span>
+                            {rowError?.jobId === item.jobId && (
+                              <p className="text-xs text-[#e06c75] font-sans mt-0.5">
+                                {rowError.message}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenLibraryMidiInStudio(item)}
+                              disabled={isAnyRowWorking}
+                              className="flex-1 sm:flex-initial min-h-[44px] px-3.5 py-2 bg-[#c5a059] hover:bg-[#d8ba7f] text-[#09090b] text-xs font-sans font-semibold rounded shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                            >
+                              {isThisRowWorking && workingAction === 'open' ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Opening...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>Open in Studio</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadLibraryMidi(item)}
+                              disabled={isAnyRowWorking}
+                              className="flex-1 sm:flex-initial min-h-[44px] px-3 py-2 bg-[#1a1a22] hover:bg-[#252532] border border-white/[0.08] text-[#ede8df] hover:text-[#f5f2ec] text-xs font-sans font-medium rounded transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                              title="Download MIDI (.mid file)"
+                            >
+                              {isThisRowWorking && workingAction === 'download' ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Downloading...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="w-3.5 h-3.5 text-[#c5a059]" />
+                                  <span>Download MIDI</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -4501,6 +4758,14 @@ export default function App() {
       <footer className="mt-auto py-5 border-t border-white/[0.04] bg-[#09090b] text-center text-xs font-sans text-[#5c5850] px-6">
         <p>AuraMIDI — Dedicated Digital Piano Studio. Sub-millisecond Web Audio Engine & MIDI Class Compliant.</p>
       </footer>
+
+      {/* Pricing & Credits Modal Overlay */}
+      <PricingScreen
+        isOpen={isPricingOpen}
+        onClose={() => setIsPricingOpen(false)}
+        onRefreshCredits={fetchCreditBalance}
+        creditBalance={creditBalance}
+      />
 
     </div>
   );
