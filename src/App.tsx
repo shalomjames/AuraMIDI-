@@ -37,7 +37,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Gauge,
-  Download
+  Download,
+  CreditCard,
+  Library,
+  LogOut,
+  Settings
 } from 'lucide-react';
 import { SAMPLE_SONGS, Song, MIDINote } from './data/sampleSongs';
 import { parseMIDIFile } from './utils/midiParser';
@@ -69,6 +73,7 @@ import { supabase } from './lib/supabase';
 import { AuthScreen } from './components/AuthScreen';
 import { PricingScreen } from './components/PricingScreen';
 import { OnboardingFlow } from './components/OnboardingFlow';
+import { ManagePlanScreen } from './components/ManagePlanScreen';
 import { authFetch } from './lib/authFetch';
 
 export interface LibraryMidiItem {
@@ -263,6 +268,63 @@ const getDefaultTrackIds = (tracks?: { id: string; name?: string; notes?: { chan
   return nonRhythmic;
 };
 
+interface ManagePlanErrorBoundaryProps {
+  onClose?: () => void;
+  children: React.ReactNode;
+}
+
+interface ManagePlanErrorBoundaryState {
+  hasError: boolean;
+}
+
+class ManagePlanErrorBoundary extends React.Component<
+  ManagePlanErrorBoundaryProps,
+  ManagePlanErrorBoundaryState
+> {
+  constructor(props: ManagePlanErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: any) {
+    console.error('[ManagePlanScreen ErrorBoundary caught error]:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[56] bg-[#09090b] text-[#ede8df] flex flex-col items-center justify-center p-6 text-center"
+        >
+          <div className="bg-[#111114] border border-white/[0.08] rounded-xl p-8 max-w-sm w-full flex flex-col items-center gap-4 shadow-xl">
+            <p className="text-base text-[#d8a8ad] font-sans">
+              Something went wrong.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ hasError: false });
+                this.props.onClose?.();
+              }}
+              className="min-h-[44px] px-6 py-2.5 bg-[#1a1a22] hover:bg-[#252532] border border-white/[0.1] text-[#ede8df] hover:text-[#f5f2ec] text-xs font-sans rounded-md transition-all cursor-pointer flex items-center justify-center"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'player' | 'transcriber'>('player');
@@ -353,6 +415,7 @@ export default function App() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [isCreditBalanceLoading, setIsCreditBalanceLoading] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
+  const [isManagePlanOpen, setIsManagePlanOpen] = useState(false);
   const showOnboarding = Boolean(
     session?.user &&
     !isCreditBalanceLoading &&
@@ -2641,6 +2704,15 @@ export default function App() {
     return <AuthScreen />;
   }
 
+  const menuItems = [
+    { key: 'credits', label: 'Get credits', icon: CreditCard, active: false, onSelect: () => setIsPricingOpen(true) },
+    { key: 'plan', label: 'Manage plan', icon: Settings, active: false, onSelect: () => setIsManagePlanOpen(true) },
+    { key: 'player', label: 'Digital Piano Studio', icon: Music, active: activeTab === 'player', onSelect: () => setActiveTab('player') },
+    { key: 'transcriber', label: 'Audio Transcription', icon: FileAudio, active: activeTab === 'transcriber', onSelect: () => setActiveTab('transcriber') },
+    { key: 'library', label: 'Your MIDIs', icon: Library, active: false, onSelect: () => { setActiveTab('transcriber'); window.setTimeout(() => document.getElementById('your-midis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150); } },
+    { key: 'import', label: 'Import MIDI Score (.mid)', icon: Upload, active: false, onSelect: () => fileInputRef.current?.click() },
+  ];
+
   return (
     <div className="min-h-screen flex flex-col bg-[#09090b] text-[#ede8df] selection:bg-[#c5a059]/20 selection:text-[#f4f0e6]">
       
@@ -2701,19 +2773,6 @@ export default function App() {
 
         {/* Right side actions & Menu */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={async () => {
-              await supabase.auth.signOut();
-              localStorage.removeItem('mirelo_active_job_id');
-              localStorage.removeItem('mirelo_active_job_name');
-              window.location.reload();
-            }}
-            className="px-2.5 py-1 text-xs font-sans text-[#8f8a80] hover:text-[#ede8df] hover:bg-white/[0.04] rounded-md transition-colors cursor-pointer border border-white/[0.06]"
-            title="Sign out"
-          >
-            Log out
-          </button>
-
           {/* Hamburger / Menu toggle on the right */}
           <div className="relative">
             <button
@@ -2723,92 +2782,7 @@ export default function App() {
             >
               {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
-
-          {/* Minimal Floating Drawer / Dropdown */}
-          {isMenuOpen && (
-            <>
-              <div 
-                className="fixed inset-0 z-40" 
-                onClick={() => setIsMenuOpen(false)}
-              />
-              <div className="absolute right-0 top-11 z-50 w-64 bg-[#111114] border border-white/[0.08] rounded-lg shadow-2xl p-2 flex flex-col gap-1 text-xs font-sans">
-                
-                <div className="px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#686359] font-medium border-b border-white/[0.05]">
-                  Workspace
-                </div>
-
-                <button
-                  onClick={() => {
-                    setActiveTab('player');
-                    setIsMenuOpen(false);
-                  }}
-                  className={`flex items-center justify-between px-3 py-2 rounded-md transition-colors cursor-pointer text-left ${
-                    activeTab === 'player' 
-                      ? 'bg-[#18181e] text-[#f5f2ec] font-medium' 
-                      : 'text-[#9c978d] hover:bg-white/[0.04] hover:text-[#ede8df]'
-                  }`}
-                >
-                  <span>Digital Piano Studio</span>
-                  {activeTab === 'player' && <Check className="w-3.5 h-3.5 text-[#c5a059]" />}
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTab('transcriber');
-                    setIsMenuOpen(false);
-                  }}
-                  className={`flex items-center justify-between px-3 py-2 rounded-md transition-colors cursor-pointer text-left ${
-                    activeTab === 'transcriber' 
-                      ? 'bg-[#18181e] text-[#f5f2ec] font-medium' 
-                      : 'text-[#9c978d] hover:bg-white/[0.04] hover:text-[#ede8df]'
-                  }`}
-                >
-                  <span>Audio Transcription</span>
-                  {activeTab === 'transcriber' && <Check className="w-3.5 h-3.5 text-[#c5a059]" />}
-                </button>
-
-                <div className="my-1 border-t border-white/[0.05]" />
-
-                <button
-                  onClick={() => {
-                    fileInputRef.current?.click();
-                    setIsMenuOpen(false);
-                  }}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[#c9c4b9] hover:text-[#f5f2ec] hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
-                >
-                  <Upload className="w-3.5 h-3.5 text-[#c5a059]" />
-                  <span>Import MIDI Score (.mid)</span>
-                </button>
-
-                {isDebugMode && (
-                  <button
-                    onClick={() => {
-                      setIsDebugMode(prev => !prev);
-                      setIsMenuOpen(false);
-                    }}
-                    className="flex items-center justify-between px-3 py-2 rounded-md text-[#c9c4b9] hover:text-[#f5f2ec] hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Terminal className="w-3.5 h-3.5 text-[#c5a059]" />
-                      <span>Debug Diagnostics</span>
-                    </div>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${isDebugMode ? 'bg-[#c5a059]/20 text-[#d8ba7f]' : 'bg-white/[0.05] text-[#6d6860]'}`}>
-                      {isDebugMode ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-                )}
-
-                <div className="my-1 border-t border-white/[0.05]" />
-
-                {/* MIDI Hardware Status Indicator */}
-                <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-[#787369]">
-                  <span className={`w-1.5 h-1.5 rounded-full ${midiConnected ? 'bg-[#c5a059]' : 'bg-[#2b2b32]'}`} />
-                  <span>{midiConnected ? 'MIDI Controller Active' : 'No MIDI Hardware'}</span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+          </div>
         </div>
 
         {/* Hidden File Input */}
@@ -2820,6 +2794,73 @@ export default function App() {
           className="hidden"
         />
       </header>
+
+      {isMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-[54] bg-black/60" onClick={() => setIsMenuOpen(false)} aria-hidden="true" />
+          <aside
+            role="dialog"
+            aria-label="Menu"
+            className="fixed right-0 top-0 h-full w-[85%] max-w-sm z-[55] bg-[#111114] border-l border-white/[0.08] shadow-2xl flex flex-col overflow-y-auto font-sans"
+            style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+          >
+            <div className="flex items-start justify-between gap-3 p-4 border-b border-white/[0.06]">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-[#686359]">Signed in as</p>
+                <p className="text-sm text-[#f5f2ec] truncate">{session?.user?.email ?? ''}</p>
+                <p className="mt-1 text-xs text-[#c5a059]">
+                  {isCreditBalanceLoading || creditBalance === null ? 'Loading credits...' : `${creditBalance.toLocaleString()} credits`}
+                </p>
+              </div>
+              <button onClick={() => setIsMenuOpen(false)} aria-label="Close menu" className="shrink-0 w-11 h-11 flex items-center justify-center rounded-md border border-white/[0.08] text-[#c9c4b9] hover:text-[#f5f2ec] cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <nav className="flex flex-col gap-1 p-3 text-sm">
+              {menuItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.key}
+                    onClick={() => { setIsMenuOpen(false); item.onSelect(); }}
+                    className={`flex items-center justify-between gap-3 min-h-[48px] px-3 rounded-md text-left transition-colors cursor-pointer ${item.active ? 'bg-[#18181e] text-[#f5f2ec] font-medium' : 'text-[#c9c4b9] hover:bg-white/[0.04] hover:text-[#f5f2ec]'}`}
+                  >
+                    <span className="flex items-center gap-3"><Icon className="w-4 h-4 text-[#c5a059]" /><span>{item.label}</span></span>
+                    {item.active && <Check className="w-3.5 h-3.5 text-[#c5a059]" />}
+                  </button>
+                );
+              })}
+              {isDebugMode && (
+                <button
+                  onClick={() => { setIsMenuOpen(false); setIsDebugMode(prev => !prev); }}
+                  className="flex items-center gap-3 min-h-[48px] px-3 rounded-md text-left text-[#c9c4b9] hover:bg-white/[0.04] hover:text-[#f5f2ec] cursor-pointer"
+                >
+                  <Terminal className="w-4 h-4 text-[#c5a059]" /><span>Debug Diagnostics</span>
+                </button>
+              )}
+            </nav>
+
+            <div className="mt-auto border-t border-white/[0.06] p-3 flex flex-col gap-1">
+              <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-[#787369]">
+                <span className={`w-1.5 h-1.5 rounded-full ${midiConnected ? 'bg-[#c5a059]' : 'bg-[#2b2b32]'}`} />
+                <span>{midiConnected ? 'MIDI Controller Active' : 'No MIDI Hardware'}</span>
+              </div>
+              <button
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  localStorage.removeItem('mirelo_active_job_id');
+                  localStorage.removeItem('mirelo_active_job_name');
+                  window.location.reload();
+                }}
+                className="flex items-center gap-3 min-h-[48px] px-3 rounded-md text-left text-sm text-[#c9c4b9] hover:bg-white/[0.04] hover:text-[#f5f2ec] cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 text-[#c5a059]" /><span>Log out</span>
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 md:p-6 flex flex-col gap-6 min-w-0 max-w-full overflow-x-hidden">
@@ -4584,7 +4625,7 @@ export default function App() {
             )}
 
               {/* Section: Your MIDIs */}
-              <div className="bg-[#111114] border border-white/[0.06] p-5 sm:p-6 rounded-lg flex flex-col gap-4 shadow-lg w-full">
+              <div id="your-midis" className="bg-[#111114] border border-white/[0.06] p-5 sm:p-6 rounded-lg flex flex-col gap-4 shadow-lg w-full">
                 <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
                   <div className="flex items-center gap-2.5">
                     <Music className="w-4 h-4 text-[#c5a059]" />
@@ -4774,7 +4815,20 @@ export default function App() {
         onClose={() => setIsPricingOpen(false)}
         onRefreshCredits={fetchCreditBalance}
         creditBalance={creditBalance}
+        onOpenManagePlan={() => {
+          setIsPricingOpen(false);
+          setIsManagePlanOpen(true);
+        }}
       />
+
+      <ManagePlanErrorBoundary onClose={() => setIsManagePlanOpen(false)}>
+        <ManagePlanScreen
+          isOpen={isManagePlanOpen}
+          onClose={() => setIsManagePlanOpen(false)}
+          onOpenPricing={() => setIsPricingOpen(true)}
+          creditBalance={creditBalance}
+        />
+      </ManagePlanErrorBoundary>
 
       <OnboardingFlow
         isOpen={showOnboarding}

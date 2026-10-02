@@ -16,6 +16,7 @@ interface PricingScreenProps {
   onClose: () => void;
   onRefreshCredits?: () => Promise<void> | void;
   creditBalance?: number | null;
+  onOpenManagePlan?: () => void;
 }
 
 export const PricingScreen: React.FC<PricingScreenProps> = ({
@@ -23,6 +24,7 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
   onClose,
   onRefreshCredits,
   creditBalance,
+  onOpenManagePlan,
 }) => {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,6 +33,7 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
   // Checkout states
   const [checkoutTier, setCheckoutTier] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [isAlreadySubscribed, setIsAlreadySubscribed] = useState(false);
   const [fallbackCheckoutUrl, setFallbackCheckoutUrl] = useState<string | null>(null);
   const [isRefreshingCredits, setIsRefreshingCredits] = useState(false);
 
@@ -62,6 +65,7 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
     if (isOpen) {
       fetchPlans();
       setCheckoutError(null);
+      setIsAlreadySubscribed(false);
       setFallbackCheckoutUrl(null);
     }
   }, [isOpen, fetchPlans]);
@@ -110,6 +114,7 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
     if (checkoutTier) return;
 
     setCheckoutError(null);
+    setIsAlreadySubscribed(false);
     setFallbackCheckoutUrl(null);
     setCheckoutTier(tier);
 
@@ -142,6 +147,26 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
         headers: customHeaders,
       });
 
+      if (fnErr) {
+        let errBody: any = null;
+        try {
+          if (fnErr.context && typeof fnErr.context.json === 'function') {
+            errBody = await fnErr.context.json();
+          }
+        } catch (_) {}
+
+        if (errBody?.error === 'already_subscribed') {
+          setIsAlreadySubscribed(true);
+          setCheckoutError("You already have a plan. You can manage it from the menu.");
+          if (newTab && !newTab.closed) {
+            try {
+              newTab.close();
+            } catch (_) {}
+          }
+          return;
+        }
+      }
+
       if (!fnErr && data) {
         if (typeof data.url === 'string' && data.url.startsWith('https://')) {
           checkoutUrl = data.url;
@@ -164,14 +189,26 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
         }
         setCheckoutError("Checkout isn't available right now. Please try again later.");
       }
-    } catch (_) {
+    } catch (err: any) {
       // Close new tab if opened and show friendly error
       if (newTab && !newTab.closed) {
         try {
           newTab.close();
         } catch (_) {}
       }
-      setCheckoutError("Checkout isn't available right now. Please try again later.");
+      let errBody: any = null;
+      try {
+        if (err?.context && typeof err.context.json === 'function') {
+          errBody = await err.context.json();
+        }
+      } catch (_) {}
+
+      if (errBody?.error === 'already_subscribed') {
+        setIsAlreadySubscribed(true);
+        setCheckoutError("You already have a plan. You can manage it from the menu.");
+      } else {
+        setCheckoutError("Checkout isn't available right now. Please try again later.");
+      }
     } finally {
       setCheckoutTier(null);
     }
@@ -243,10 +280,22 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
           <div className="flex flex-col gap-6">
             {/* Friendly Checkout Error Banner */}
             {checkoutError && (
-              <div className="p-4 bg-[#1c1214] border border-[#6b2930] rounded-lg text-center animate-fadeIn">
+              <div className="p-4 bg-[#1c1214] border border-[#6b2930] rounded-lg text-center animate-fadeIn flex flex-col items-center gap-3">
                 <p className="text-xs sm:text-sm text-[#f5d6d8] font-sans">
                   {checkoutError}
                 </p>
+                {isAlreadySubscribed && onOpenManagePlan && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenManagePlan();
+                    }}
+                    className="min-h-[44px] px-5 py-2 bg-[#c5a059] hover:bg-[#d8ba7f] text-[#09090b] font-sans font-semibold text-xs rounded-md shadow transition-all cursor-pointer flex items-center justify-center"
+                  >
+                    Manage plan
+                  </button>
+                )}
               </div>
             )}
 
