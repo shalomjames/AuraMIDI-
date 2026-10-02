@@ -145,41 +145,7 @@ export const PricingScreen: React.FC<PricingScreenProps> = ({
       if (!fnErr && data) {
         if (typeof data.url === 'string' && data.url.startsWith('https://')) {
           checkoutUrl = data.url;
-        } else if (typeof data.session_id === 'string' && data.session_id.length > 0) {
-          checkoutUrl = `https://checkout.stripe.com/c/pay/${data.session_id}`;
         }
-      }
-
-      // If invoke failed or returned no url, attempt direct fetch with standard headers
-      if (!checkoutUrl) {
-        try {
-          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-          const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-          if (supabaseUrl && supabaseKey) {
-            const reqHeaders: Record<string, string> = {
-              'Content-Type': 'application/json',
-              'apikey': supabaseKey,
-            };
-            if (sessionToken) {
-              reqHeaders.Authorization = `Bearer ${sessionToken}`;
-            }
-
-            const res = await fetch(`${supabaseUrl}/functions/v1/create-checkout`, {
-              method: 'POST',
-              headers: reqHeaders,
-              body: JSON.stringify({ tier }),
-            });
-
-            if (res.ok) {
-              const directData = await res.json();
-              if (typeof directData?.url === 'string' && directData.url.startsWith('https://')) {
-                checkoutUrl = directData.url;
-              } else if (typeof directData?.session_id === 'string' && directData.session_id.length > 0) {
-                checkoutUrl = `https://checkout.stripe.com/c/pay/${directData.session_id}`;
-              }
-            }
-          }
-        } catch (_) {}
       }
 
       // 3. If checkoutUrl is valid https link

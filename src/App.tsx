@@ -68,6 +68,7 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { AuthScreen } from './components/AuthScreen';
 import { PricingScreen } from './components/PricingScreen';
+import { OnboardingFlow } from './components/OnboardingFlow';
 import { authFetch } from './lib/authFetch';
 
 export interface LibraryMidiItem {
@@ -352,6 +353,14 @@ export default function App() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [isCreditBalanceLoading, setIsCreditBalanceLoading] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
+  const showOnboarding = Boolean(
+    session?.user &&
+    !isCreditBalanceLoading &&
+    creditBalance !== null &&
+    creditBalance === 0 &&
+    session.user.user_metadata?.onboarding_done !== true &&
+    (typeof window !== 'undefined' && localStorage.getItem(`aura_onboarding_done_${session.user.id}`) !== '1')
+  );
   const [isDebugMode, setIsDebugMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -4765,6 +4774,12 @@ export default function App() {
         onClose={() => setIsPricingOpen(false)}
         onRefreshCredits={fetchCreditBalance}
         creditBalance={creditBalance}
+      />
+
+      <OnboardingFlow
+        isOpen={showOnboarding}
+        onOpenPricing={() => setIsPricingOpen(true)}
+        user={session?.user}
       />
 
     </div>
